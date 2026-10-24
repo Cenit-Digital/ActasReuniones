@@ -1,0 +1,80 @@
+name: Harness CI
+
+# Cada job tiene un gemelo `-propio` con los mismos pasos (anclas YAML) y la condición contraria; un job saltado no gasta
+# minutos. En los repos PRIVADOS de Cenit-Digital, el conmutador de KubernetesInfrastructure (ADR 0016) pone la variable
+# de repo CI_RUNNER=cenit-runners al pasar el 80 % del cupo de Actions: entonces corren los gemelos, en los runners del
+# servidor de Cenit Digital (cenit-runners, ARC). Sin la variable (siempre en este repo público y en cualquier derivado
+# fuera de Cenit-Digital) corren los jobs de GitHub de siempre, con sus nombres de check.
+# El pod de trabajo de ARC no tiene root y exige `container:`: los gemelos usan la imagen oficial de Node por digest.
+# Los PR de Renovate nunca van a los runners propios.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Un grupo por PR (un push nuevo cancela el run anterior) y uno por commit fuera de los PR.
+  group: harness-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  root-harness:
+    name: Arnés raíz (init)
+    if: vars.CI_RUNNER != 'cenit-runners' || (github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - &checkout
+        uses: actions/checkout@v5
+      - &setup_node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          package-manager-cache: false # sin caché automático: falla con "packageManager: pnpm" (ver pr-body.yml)
+      - &init
+        run: node .harness/harness.mjs init
+      - &tests_plantilla
+        name: Tests del script de propagación, del manifiesto y del comprobador del PR
+        run: node --test .harness/test/upgrade.test.mjs .harness/test/pr-body.test.mjs
+
+  engine-tests:
+    name: Motor (tests)
+    if: vars.CI_RUNNER != 'cenit-runners' || (github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - *setup_node
+      - &motor
+        run: node --test .harness/test/engine.test.mjs
+
+  root-harness-propio:
+    name: Arnés raíz (init) (runners propios)
+    if: vars.CI_RUNNER == 'cenit-runners' && !(github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: cenit-runners
+    timeout-minutes: 30
+    container:
+      image: docker.io/library/node:22-bookworm@sha256:82693da96a4e38b8c0e2bf0c5df58fcb86d2d25e5a235c07748f09bfa38567c2
+    steps:
+      - *checkout
+      - *setup_node
+      - *init
+      - *tests_plantilla
+
+  engine-tests-propio:
+    name: Motor (tests) (runners propios)
+    if: vars.CI_RUNNER == 'cenit-runners' && !(github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: cenit-runners
+    timeout-minutes: 30
+    container:
+      image: docker.io/library/node:22-bookworm@sha256:82693da96a4e38b8c0e2bf0c5df58fcb86d2d25e5a235c07748f09bfa38567c2
+    steps:
+      - *checkout
+      - *setup_node
+      - *motor

@@ -1,0 +1,25 @@
+{
+  "$schema": "./harness.schema.json",
+  "project": "mi-proyecto",
+  "language": "generic",
+  "description": "Rellena este archivo con los comandos de TU stack. Es el único punto que hace al arnés dependiente del lenguaje. Ver docs/configuration.md y los adaptadores por stack en .harness/adapters/.",
+  "commands": {
+    "install": "",
+    "lint": "",
+    "test": "",
+    "mutate": "",
+    "build": ""
+  },
+  "paths": {
+    "src": "src",
+    "tests": "tests"
+  },
+  "mutation": {
+    "threshold": 0.8,
+    "targets": []
+  },
+  "rules": {
+    "require_tests_to_close": false,
+    "require_mutation_to_close": false
+  }
+}

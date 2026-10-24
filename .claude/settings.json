@@ -1,0 +1,11 @@
+{
+  "$schema_comment": "Ajustes de proyecto del arnés: modelo por defecto y una allowlist mínima. Sin hooks que corran los tests: bloquean a Claude hasta terminar y, al salir con 1 en rojo, no condicionan nada; la verificación va en el cierre de tarea, la revisión local del diff y la CI (ver docs/tooling.md).",
+  "model": "opusplan",
+  "permissions": {
+    "allow": [
+      "Bash(./init.sh)",
+      "Bash(bin/harness:*)",
+      "Bash(node .harness/harness.mjs:*)"
+    ]
+  }
+}

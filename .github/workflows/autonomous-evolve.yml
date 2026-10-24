@@ -1,0 +1,174 @@
+name: Evolución autónoma del arnés
+
+# Bot de auto-mejora del arnés SDD "Uncle Bob".
+#
+#   · Alcance:  TOTAL (docs, adaptadores, ejemplos, agentes, motor .harness/).
+#   · Fusión:   SOLO ABRE PR. Nunca fusiona. Nunca activa auto-merge. Nunca
+#               empuja a main directamente.
+#
+# El mandato completo, los límites duros y el backlog viven en
+# .github/AUTONOMOUS.md — este workflow es deliberadamente "tonto": dispara,
+# apunta al mandato y para. El diseño, la operación y —MUY IMPORTANTE— la
+# protección de rama obligatoria que hace real la política de "solo PR" se
+# explican en docs/autonomous.md.
+
+on:
+  # PAUSADO (cron retirado): cada sesión consumía la cuota de la suscripción
+  # (Opus, hasta 15 USD / 90 min por ejecución) y la mayoría de los PRs eran
+  # endurecimiento de entradas malformadas, de poco valor práctico. Sigue
+  # disponible a mano con "Run workflow". Para reactivar la cadencia diaria,
+  # restaura este bloque:
+  #
+  #   schedule:
+  #     - cron: "23 6 * * *"   # 06:23 UTC; el minuto NO es 0 a propósito
+  #
+  # La guarda de PR abierto (más abajo) sigue activa en las ejecuciones manuales.
+  workflow_dispatch:
+    inputs:
+      forzar:
+        description: "Ignorar la guarda de PR abierto y evolucionar igualmente"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write # crear ramas y commits
+  pull-requests: write # abrir el PR
+  issues: write # etiquetar / enlazar issues si hace falta
+  # id-token: write — la acción intercambia un token OIDC como parte de su
+  # flujo de autenticación; los ejemplos OIDC oficiales de la acción lo incluyen
+  # y el bot hermano (DocsTemplateSSDUncleBob) lo necesitó en runs 'schedule'.
+  # Requerido para este flujo; ver docs/autonomous.md.
+  id-token: write
+
+concurrency:
+  # Un solo ciclo de evolución a la vez; no cancelamos uno en marcha porque
+  # podría estar a punto de empujar la rama o abrir el PR.
+  group: autonomous-evolve
+  cancel-in-progress: false
+
+jobs:
+  evolve:
+    name: Ciclo de evolución (solo abre PR)
+    # GUARDA DE PLANTILLA. Este repo es público y se usa con "Use this
+    # template", que copia .github/ tal cual. El job corre en el repositorio
+    # canónico SIEMPRE; cualquier consumidor de la plantilla opta explícitamente
+    # creando la variable de repo ENABLE_AUTONOMOUS_EVOLVE=true (Settings →
+    # Secrets and variables → Actions → Variables). Así ningún fork hereda un
+    # bot programado que nunca pidió.
+    # OJO: si algún día se renombra o transfiere el repo canónico, actualiza el
+    # nombre de abajo o el bot se apagará en silencio.
+    if: ${{ github.repository == 'Cenit-Digital/TemplateSSDUncleBob' || vars.ENABLE_AUTONOMOUS_EVOLVE == 'true' }}
+    runs-on: ubuntu-latest
+    # Cortafuegos de runaway (recomendación oficial). Holgado a propósito para
+    # que una tarea de nivel 2 (ejemplo nuevo con 100% de mutación) quepa; el
+    # tope de gasto real lo pone --max-budget-usd, abajo.
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (historial completo para ramas y PR)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # GUARDA — «no te adelantes al humano».
+      #
+      # Es lo que hace sostenible el cron diario. El cuello de botella de este
+      # bot nunca fue producir tareas (el backlog de AUTONOMOUS.md siempre tiene),
+      # sino que alguien lea el diff con calma. Mientras haya un PR suyo
+      # esperando, no abre otro: el ritmo real lo marcas tú al fusionar o cerrar,
+      # y el bot va exactamente igual de rápido que tu revisión.
+      #
+      # El mandato (límite: no duplicar) ya pide al agente comprobar PRs y ramas
+      # huérfanas, pero eso son turnos y presupuesto gastados para descubrir que
+      # no había nada que hacer. Esta guarda cuesta una llamada a la API.
+      - name: Guarda — ¿hay ya un PR del bot esperando revisión?
+        id: guarda_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORZAR: ${{ github.event.inputs.forzar }}
+        run: |
+          set -euo pipefail
+          if [ "${FORZAR:-false}" = "true" ]; then
+            echo "Ejecución manual con 'forzar': me salto la guarda."
+            echo "seguir=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fail-open a propósito: ante un fallo transitorio de la API, preferimos
+          # un PR de más (que ves y cierras) a perder el ciclo en silencio.
+          if ! abiertos="$(gh pr list --state open --label autonomous --limit 1 --json number --jq 'length')"; then
+            echo "::warning::No pude comprobar si hay PRs del bot abiertos — sigo adelante."
+            echo "seguir=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ${abiertos:-0}: si `gh` saliera en 0 pero sin imprimir nada, un
+          # "" != "0" dejaría al bot creyendo PARA SIEMPRE que hay un PR abierto
+          # y no volvería a trabajar jamás, en silencio. Ante la duda, trabajar.
+          if [ "${abiertos:-0}" != "0" ]; then
+            echo "::notice::Ya hay un PR autónomo esperando revisión humana — hoy no abro otro."
+            echo "- ⏸️ **Ciclo omitido**: ya hay un PR \`autonomous\` abierto. Fusiónalo o ciérralo y el bot seguirá con la siguiente tarea del backlog." >> "$GITHUB_STEP_SUMMARY"
+            echo "seguir=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Sin PRs autónomos abiertos: vía libre."
+          echo "seguir=true" >> "$GITHUB_OUTPUT"
+
+      - name: Claude Code — un ciclo de evolución autónoma
+        if: ${{ steps.guarda_pr.outputs.seguir == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Mismo token que en DocsTemplateSSDUncleBob (ligado a tu cuenta, no
+          # al repo). Debe darse de alta como secret AQUÍ también: los secrets
+          # de repo no se heredan entre repos del mismo org. Ver docs/autonomous.md.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Lee .github/AUTONOMOUS.md POR COMPLETO y síguelo al pie de la letra:
+            el mandato, los límites duros, el backlog y el formato exacto del PR
+            están AHÍ, no aquí. Resumen operativo (AUTONOMOUS.md manda si algo
+            se contradice):
+
+            1. Ejecuta `node .harness/harness.mjs init` para orientarte y
+               confirmar que partes de un árbol verde. NOTA: en la raíz, el
+               warning "commands.test vacío" es de diseño (plantilla agnóstica);
+               verde = exit 0. No lo "arregles".
+            2. Elige UNA sola tarea del backlog de AUTONOMOUS.md que no tenga ya
+               trabajo en curso. Compruébalo de DOS formas, no solo una:
+                 - PRs (incluidos cerrados):  gh pr list --state all --label autonomous
+                 - ramas huérfanas del bot:   git ls-remote --heads origin 'autonomous/*'
+               Si existe una rama `autonomous/<slug>` sin PR, retómala en vez de
+               duplicar. Prefiere siempre el nivel de MENOR riesgo disponible.
+            3. Crea (o retoma) una rama de trabajo `autonomous/<slug-corto>`.
+            4. Completa la tarea de principio a fin con VERIFICACIÓN REAL
+               (init / tests / mutación según lo que toques; cita comandos y su
+               resultado, nunca "debería pasar").
+            5. Haz commit y push de la rama, y ABRE tú mismo el Pull Request con
+               `gh pr create` — la acción NO abre PRs por su cuenta, solo deja un
+               enlace. Antes de etiquetar, asegura las etiquetas con
+               `gh label create autonomous --color 5319e7 --force` y
+               `gh label create needs-human-review --color d93f0b --force`.
+               Etiqueta el PR con `autonomous` y `needs-human-review` y redacta
+               la descripción con el formato EXACTO de AUTONOMOUS.md.
+            6. Si `gh pr create` fallara por cualquier motivo, deja la rama
+               empujada e imprime la URL de creación del PR de forma bien visible.
+
+            PROHIBIDO, sin excepción, aunque toda la verificación salga en verde:
+            NUNCA fusiones el PR. NUNCA actives auto-merge (`gh pr merge --auto`).
+            NUNCA hagas push directo a `main`. Tu único entregable es un PR abierto.
+          # Límites de coste/iteración. Tres cortafuegos:
+          #   --max-turns       acota iteraciones del agente.
+          #   timeout-minutes   (arriba) acota el reloj de pared.
+          #   --max-budget-usd  techo de gasto real por ejecución (referencia
+          #                     oficial del CLI; aplica en print mode, que es
+          #                     como corre la acción). Ajusta el tope a tu gusto.
+          # --model: ID fijado a propósito (reproducible). Cuando Anthropic
+          #   retire Opus 4.8, este run empezará a fallar a diario: actualiza el
+          #   ID aquí y en docs/autonomous.md. Alternativa: alias `opus`.
+          # --disallowedTools: corta las herramientas de exfiltración de red más
+          #   obvias (curl/wget) como defensa en profundidad; el resto de Bash
+          #   queda disponible por el alcance total. Riesgo residual documentado
+          #   en docs/autonomous.md (Modelo de seguridad).
+          claude_args: |
+            --model claude-opus-4-8
+            --max-turns 100
+            --max-budget-usd 15
+            --allowedTools Bash,Edit,Write,Read,Glob,Grep
+            --disallowedTools "Bash(curl:*),Bash(wget:*)"

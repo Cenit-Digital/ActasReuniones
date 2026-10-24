@@ -1,0 +1,13 @@
+# CODEOWNERS — revisión obligatoria del dueño sobre las rutas sensibles del arnés.
+#
+# Efectivo cuando la protección de rama de `main` tiene activado
+# "Require review from Code Owners" (ver docs/autonomous.md → checklist del
+# dueño). Sin esa opción, CODEOWNERS es solo informativo. Basta la aprobación de
+# UN code owner de los listados.
+#
+# Cubre todo lo que gobierna al bot autónomo, su correa y su cadena de
+# verificación: workflows, permisos, mandato, agentes y el motor del arnés.
+
+/.github/     @PabloHurtadoGonzalo86 @PhurtadoCenitDigital
+/.harness/    @PabloHurtadoGonzalo86 @PhurtadoCenitDigital
+/.claude/     @PabloHurtadoGonzalo86 @PhurtadoCenitDigital

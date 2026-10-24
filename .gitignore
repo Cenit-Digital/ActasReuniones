@@ -1,0 +1,41 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Artefactos de build
+dist/
+build/
+*.tsbuildinfo
+
+# Mutación / tests
+.stryker-tmp/
+.coverage
+htmlcov/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Rust
+target/
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Memoria organizacional (caché local; se regenera con scripts/sync-memoria.*)
+.memoria-cache/
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

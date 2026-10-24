@@ -1,0 +1,68 @@
+name: Guardián de rutas sensibles
+
+# En cada PR, si se tocan rutas que gobiernan al bot autónomo, su correa o su
+# cadena de verificación, etiqueta el PR con `permissions-change` y deja un aviso
+# prominente para que la revisión humana no lo pase por alto.
+#
+# NO bloquea (no falla el check): el bloqueo real lo hacen CODEOWNERS + la
+# protección de rama (ver docs/autonomous.md). Este job es la señal de
+# visibilidad que convierte la autodeclaración del límite 1 en algo mecánico.
+#
+# Usa `pull_request_target` A PROPÓSITO: así corre la versión de este guardián
+# que está en `main` (un PR no puede neutralizarlo desde su propia rama) y tiene
+# permiso de escritura para etiquetar incluso PRs desde forks. SEGURIDAD: este
+# job NO hace checkout ni ejecuta el código del PR — solo lista nombres de
+# ficheros por API y aplica una etiqueta, así que no hay riesgo de RCE.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write # crear/aplicar etiquetas
+
+concurrency:
+  group: guard-sensitive-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  flag:
+    name: Marcar cambios en rutas sensibles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detectar rutas sensibles y etiquetar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Incluye previous_filename: un RENAME de una ruta sensible reporta
+          # solo la ruta nueva en .filename — sin esto, mover el mandato, la CI
+          # o el motor escaparía al guardián.
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)')"
+          sensitive="$(printf '%s\n' "$files" | grep -E '^(\.github/workflows/|\.github/AUTONOMOUS\.md$|\.github/CODEOWNERS$|docs/autonomous\.md$|\.harness/.*\.(mjs|js|cjs|ts)$|\.claude/)' || true)"
+          if [ -z "$sensitive" ]; then
+            echo "Sin rutas sensibles tocadas en este PR."
+            echo "- Sin rutas sensibles en este PR." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "::warning title=Cambio en rutas sensibles::Este PR toca workflows/permisos o la cadena de verificación del arnés. Requiere revisión reforzada (límite 1 de .github/AUTONOMOUS.md)."
+          {
+            echo "## ⚠️ Rutas sensibles modificadas"
+            echo ""
+            echo "Este PR toca ficheros que gobiernan al bot autónomo, su correa o su cadena de verificación. Revísalo con especial atención (límite 1 de \`.github/AUTONOMOUS.md\`):"
+            echo ""
+            printf '%s\n' "$sensitive" | while IFS= read -r f; do echo "- $f"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Etiquetar vía la API REST: `gh api` NO necesita contexto git local.
+          # En pull_request_target no hacemos checkout, así que `gh pr edit` /
+          # `gh label create` sin --repo fallarían con "not a git repository"
+          # (lo destapó el primer run real del bot). No bloqueante por diseño.
+          gh label create permissions-change --repo "$REPO" --color b60205 \
+            --description "El PR toca workflow/permisos/motor de verificación: requiere revisión reforzada" --force || true
+          gh api -X POST "repos/$REPO/issues/$PR/labels" -f "labels[]=permissions-change" >/dev/null \
+            || echo "::warning::No se pudo aplicar la etiqueta permissions-change; revísalo manualmente."
+          exit 0

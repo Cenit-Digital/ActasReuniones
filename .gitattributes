@@ -1,0 +1,29 @@
+# Normaliza finales de línea. Por defecto LF (crítico para que los scripts
+# bash funcionen en Linux/CI aunque se editen en Windows).
+* text=auto eol=lf
+
+# Scripts POSIX: SIEMPRE LF (un CRLF rompe el shebang en Linux).
+*.sh   text eol=lf
+bin/harness text eol=lf
+
+# Código y config: LF.
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.py   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.feature text eol=lf
+
+# Scripts de Windows: CRLF.
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+
+# Binarios: sin conversión.
+*.png  binary
+*.jpg  binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

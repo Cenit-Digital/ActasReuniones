@@ -1,0 +1,40 @@
+name: Plantilla del PR
+
+# Comprueba que la descripción del PR sigue .github/pull_request_template.md: las cinco secciones
+# con contenido y la casilla de revisión local marcada. Sin esa comprobación la plantilla se salta
+# con facilidad (`gh pr create --body-file`, `--fill`). Lo hace .harness/pr-body.mjs, sin LLM.
+#
+# No es un check requerido de `main` (eso es protección de rama y se decide aparte). Se repite al
+# editar la descripción; se salta en borradores (al marcarlos listos se ejecuta) y en PR de bots.
+#
+# SEGURIDAD: la descripción entra por variable de entorno, nunca interpolada en el script, y el
+# comprobador no la imprime (una línea "::..." sería un comando del workflow).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-body-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  body:
+    name: Cuerpo del PR
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          # Sin caché automático: con "packageManager: pnpm" en el package.json del derivado, setup-node
+          # lo activaría y fallaría porque pnpm aún no está instalado en este paso.
+          package-manager-cache: false
+      - name: Comprobar la descripción del PR
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node .harness/pr-body.mjs

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "description": "Qué ficheros son de la plantilla y cuáles del proyecto. Lo lee scripts/harness-upgrade.mjs de la plantilla descargada. Cada fichero cae en exactamente una categoría; una entrada que acaba en '/' es un directorio. template: se propaga tal cual. executable: subconjunto de template que debe llevar el bit ejecutable. mixedBlock: contiene un bloque gestionado entre marcadores; blockSource es el fichero de la plantilla que lo define (marcadores incluidos) y el script lo compara y lo reemplaza. mixedJson: JSON mixto, solo se informa de la deriva. project: del proyecto, nunca se toca. excluded: solo de la plantilla, no se propaga. optional: de la plantilla pero no se exige: se compara y se actualiza si existe en el proyecto; si falta no es deriva y --apply no lo crea.",
+  "template": [
+    ".claude/agents/worker_fast.md", ".claude/agents/worker_balanced.md", ".claude/agents/reviewer_frontier.md", ".github/ISSUE_TEMPLATE/", ".github/pull_request_template.md",
+    ".codex/agents/",
+    ".github/agents/",
+    ".opencode/agents/",
+    ".github/workflows/pr-body.yml", ".harness/adapters/", ".harness/harness.mjs", ".harness/impacto-tareas.mjs", ".harness/pr-body.mjs",
+    "CHECKPOINTS.md",
+    "CLAUDE.md",
+    "bin/harness", "bin/harness.ps1", "GEMINI.md", "harness.manifest.json", "harness.schema.json",
+    "init.ps1", "init.sh", "scripts/harness-upgrade.mjs",
+    "docs/configuration.md", "docs/gherkin.md",
+    "docs/instrucciones-de-usuario.md",
+    "docs/modelos.md", "docs/mutation-testing.md", "docs/tdd.md", "docs/tooling.md", "docs/verification.md"
+  ],
+  "executable": ["bin/harness", "init.sh"],
+  "optional": [".claude/agents/security_reviewer.md", ".claude/agents/a11y_seo_auditor.md", ".claude/agents/mentor.md"],
+  "mixedBlock": ["AGENTS.md"],
+  "blockSource": ".harness/agents-block.md",
+  "mixedJson": [".claude/settings.json", "harness.config.json"],
+  "project": [
+    ".editorconfig", ".gitattributes", ".gitignore", ".github/CODEOWNERS", ".github/workflows/harness-ci.yml",
+    "LICENSE", "README.md", "docs/architecture.md", "docs/conventions.md",
+    "features/", "src/", "tests/"
+  ],
+  "excluded": [
+    ".agents/skills/", ".github/AUTONOMOUS.md", ".github/workflows/autonomous-evolve.yml",
+    ".github/workflows/guard-sensitive-paths.yml", ".harness/agents-block.md", ".harness/test/", "docs/autonomous.md",
+    "docs/decisiones/", "docs/memoria-organizacional.md",
+    "scripts/sync-memoria.ps1", "scripts/sync-memoria.sh", "skills-lock.json"
+  ]
+}
