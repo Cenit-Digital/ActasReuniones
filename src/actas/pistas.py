@@ -1,0 +1,50 @@
+"""De los ficheros que deja VDO.Ninja v30.2 a las pistas de la petición a la plataforma de transcripción.
+
+El grabador abre una página por socio con `&label=<id>`, así que cada grabación se llama `<id>_<ms>.webm`
+(buildRecordingFilenameBase + Date.now() al empezar; anexo de F0 del ADR 0015). Un socio que se reconecta deja otro fichero.
+La plataforma solo suma un desfase constante a cada pista: `desfase_ms` es la marca de cada fichero menos la menor.
+"""
+
+import re
+from dataclasses import dataclass
+
+TOPE_PISTAS = 16  # MAX_PISTAS de la API interna de la plataforma (transcribir.entradas.api.app)
+
+_GRABACION = re.compile(r"^(?P<socio>[a-z0-9]+)_(?P<ms>\d+)\.webm$")
+_PARTIDA = re.compile(r"^[a-z0-9]+_\d+\.webm_\d+$")
+_TEMPORAL = (".crdownload",)
+
+
+class PistasNoValidas(ValueError):
+    """Los ficheros de la reunión no se pueden enviar tal cual: la reunión pasa a `error` y el audio se conserva."""
+
+
+@dataclass(frozen=True)
+class Pista:
+    fichero: str
+    socio: str
+    marca_ms: int
+    desfase_ms: int
+
+
+def pistas_de(ficheros: list[str], conformes: list[str]) -> list[Pista]:
+    """Las pistas ordenadas por marca, con su desfase. Ignora descargas a medias y ficheros que no son grabaciones."""
+    encontradas: list[tuple[int, str, str]] = []
+    for nombre in ficheros:
+        if nombre.endswith(_TEMPORAL) or nombre.startswith(".") or nombre.endswith((".json", ".jsonl")):
+            continue
+        if _PARTIDA.match(nombre):
+            raise PistasNoValidas("grabación partida por VDO.Ninja: su marca no es la del trozo")
+        m = _GRABACION.match(nombre)
+        if m is None:
+            raise PistasNoValidas("fichero que no es una grabación")
+        if m["socio"] not in conformes:
+            raise PistasNoValidas("pista de un socio no conforme")
+        encontradas.append((int(m["ms"]), m["socio"], nombre))
+    if not encontradas:
+        raise PistasNoValidas("ninguna pista")
+    if len(encontradas) > TOPE_PISTAS:
+        raise PistasNoValidas(f"{len(encontradas)} pistas, más que las {TOPE_PISTAS} que admite la plataforma")
+    encontradas.sort()
+    origen = encontradas[0][0]
+    return [Pista(nombre, socio, ms, ms - origen) for ms, socio, nombre in encontradas]

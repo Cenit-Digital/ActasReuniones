@@ -23,7 +23,9 @@
   "project": [
     ".editorconfig", ".gitattributes", ".gitignore", ".github/CODEOWNERS", ".github/workflows/harness-ci.yml",
     "LICENSE", "README.md", "docs/architecture.md", "docs/conventions.md",
-    "features/", "src/", "tests/"
+    "features/", "src/", "tests/",
+    "migraciones/", "pyproject.toml", "uv.lock", "scripts/pg-pruebas.sh", ".github/workflows/imagen.yml", "Dockerfile",
+    ".dockerignore", "cosmic-ray.toml"
   ],
   "excluded": [
     ".agents/skills/", ".github/AUTONOMOUS.md", ".github/workflows/autonomous-evolve.yml",
