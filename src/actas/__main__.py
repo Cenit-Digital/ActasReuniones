@@ -42,6 +42,9 @@ class _GrabacionConCdp:
         assert self._g is not None
         return self._g.vistos()
 
+    def viva(self) -> bool:
+        return self._g is not None and self._g.cdp.vivo
+
     def parar(self) -> bool:
         assert self._g is not None
         try:

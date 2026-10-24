@@ -34,6 +34,7 @@ PURGA_S = 3600
 class Grabador(Protocol):
     def empezar(self) -> None: ...
     def vistos(self) -> dict[str, list[str]]: ...
+    def viva(self) -> bool: ...
     def parar(self) -> bool: ...
 
 
@@ -136,6 +137,10 @@ class Supervisor:
         a = self.activa
         r = self.repo.reunion(a.rid)
         motivo = motivo_parada(a.inicio_s, self.reloj(), r["parar_pedido_en"] is not None)
+        if motivo is None and not a.grabador.viva():
+            # Chromium se reinició o se cayó: sus páginas ya no graban. Se envía lo que se llegó a descargar.
+            motivo = "grabador_caido"
+            self.metricas.sumar("errores_total")
         if motivo:
             if motivo == "tope_3h":
                 self.metricas.sumar("tope_total")
@@ -154,7 +159,11 @@ class Supervisor:
     def _parar(self, motivo: str) -> None:
         assert self.activa is not None
         a, self.activa = self.activa, None
-        completas = a.grabador.parar()
+        try:
+            completas = a.grabador.parar()
+        except Exception as e:  # noqa: BLE001 — la reunión no puede quedarse «grabando»: se envía lo que haya
+            self.log("la parada falló:", type(e).__name__)
+            completas = False
         self.metricas.grabando = self.metricas.aviso_sin_coincidencia = 0
         self.metricas.socios_esperados = self.metricas.socios_vistos = 0
         if not completas:

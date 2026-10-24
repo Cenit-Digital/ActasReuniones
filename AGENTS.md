@@ -5,7 +5,7 @@
 
 ## 1. Resumen del proyecto
 
-**Actas de las reuniones de socios de Cenit Digital**, F1 del [ADR 0015](https://github.com/Cenit-Digital/KubernetesInfrastructure/blob/main/docs/infraestructura/decisiones/0015-actas-de-reuniones.md) de KubernetesInfrastructure (issue KubernetesInfrastructure#223). Un supervisor en Python atiende las peticiones de grabar y parar que llegan por PostgreSQL. Controla por CDP un Chromium sin cabeza con una página espectadora de VDO.Ninja por socio conforme. Al parar, envía las pistas a la plataforma de transcripción (ADR 0017, D8) y guarda el texto en el archivo de actas. El despliegue (espacio `actas`, red, Secrets) vive en KubernetesInfrastructure, `kubernetes/apps/actas/`.
+**Actas de las reuniones de socios de Cenit Digital**, F1 de la [decisión 0015 de KubernetesInfrastructure](https://github.com/Cenit-Digital/KubernetesInfrastructure/blob/main/docs/infraestructura/decisiones/0015-actas-de-reuniones.md) (issue KubernetesInfrastructure#223). Un supervisor en Python atiende las peticiones de grabar y parar que llegan por PostgreSQL. Controla por CDP un Chromium sin cabeza con una página espectadora de VDO.Ninja por socio conforme. Al parar, envía las pistas a la plataforma de transcripción (decisión 0017 de KubernetesInfrastructure, apartado de actas) y guarda el texto en el archivo de actas. El despliegue (espacio `actas`, red, Secrets) vive en KubernetesInfrastructure, `kubernetes/apps/actas/`.
 
 Reglas que no se negocian:
 - Son datos personales (voz y palabras de los socios).

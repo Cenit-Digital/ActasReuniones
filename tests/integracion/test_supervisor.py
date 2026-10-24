@@ -21,6 +21,8 @@ class GrabacionFalsa:
     def __init__(self, socios, destino: Path):
         self.socios, self.destino = socios, destino
         self.empezada = self.parada = False
+        self.viva_ = True
+        self.fallo_al_parar = False
         self.ver: dict[str, list[str]] = {s: [s] for s in socios}
         GrabacionFalsa.creadas.append(self)
 
@@ -31,8 +33,13 @@ class GrabacionFalsa:
     def vistos(self):
         return self.ver
 
+    def viva(self):
+        return self.viva_
+
     def parar(self):
         self.parada = True
+        if self.fallo_al_parar:
+            raise RuntimeError("Chromium ha terminado")
         for n, s in enumerate(self.socios):
             (self.destino / f"{s}_{1000 + 500 * n}.webm").write_bytes(b"opus")
         return True
@@ -246,3 +253,27 @@ def test_reintento_tras_error_vuelve_a_enviar(entorno):
     assert repo.reintentar(rid)
     sup.paso()
     assert repo.reunion(rid)["estado"] == "transcribiendo" and len(plataforma.creaciones) == 2
+
+
+def test_si_parar_falla_la_reunion_no_se_queda_grabando(entorno):
+    sup, repo, *_ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    GrabacionFalsa.creadas[0].fallo_al_parar = True
+    repo.pedir_parada()
+    sup.paso()
+    r = repo.reunion(rid)
+    # Pasa a grabada y, sin ningún fichero descargado, a error por pistas al intentar enviarla (en la misma vuelta).
+    assert (r["estado"], r["motivo"], sup.activa) == ("error", "pistas", None)
+
+
+def test_chromium_caido_para_la_grabacion_con_su_motivo(entorno):
+    sup, repo, plataforma, metricas, _, _ = entorno
+    plataforma.respuesta_crear = (503, None)  # se queda en grabada para leer el motivo
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    GrabacionFalsa.creadas[0].viva_ = False
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["motivo"]) == ("grabada", "grabador_caido")
+    assert metricas.errores_total == 1
