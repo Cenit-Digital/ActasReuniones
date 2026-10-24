@@ -14,6 +14,7 @@ import os
 import signal
 import sys
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 
 from actas import base
@@ -46,7 +47,11 @@ class _GrabacionConCdp:
     def reanudar(self) -> None:
         cdp_url, sala, socios, destino, registro = self._args
         self._g = Grabacion(Cdp(cdp_url, registro), sala, socios, destino, registro)
-        self._g.reanudar()
+        try:
+            self._g.reanudar()
+        except Exception:
+            self._g.cdp.cerrar()
+            raise
 
     def vistos(self) -> dict[str, list[str]]:
         assert self._g is not None
@@ -77,11 +82,16 @@ def cerrar_paginas_de_sala(cdp_url: str, sala: Sala, registro: Registro) -> None
         cdp.cerrar()
 
 
+def registro_del_entorno(e: Mapping[str, str], token: str) -> Registro:
+    """El registro del proceso, que redacta la contraseña de la sala, el token y las contraseñas de la base."""
+    return Registro([e.get("CLAVE", ""), token, e.get("PGPASSWORD", ""), e.get("ACTAS_MIGRACIONES_PASSWORD", "")])
+
+
 def main() -> None:
     e = os.environ
     token = Path(e["ACTAS_TOKEN_FICHERO"]).read_text(encoding="utf-8").strip()
     sala = Sala.del_entorno()
-    registro = Registro([sala.clave, token, e.get("PGPASSWORD", ""), e.get("ACTAS_MIGRACIONES_PASSWORD", "")])
+    registro = registro_del_entorno(e, token)
     aplicadas = base.migrar(e["ACTAS_DSN_MIGRACIONES"], password=e["ACTAS_MIGRACIONES_PASSWORD"])
     registro("migraciones aplicadas:", ", ".join(aplicadas) or "ninguna")
     metricas = Metricas()

@@ -362,10 +362,9 @@ def test_401_no_deja_el_token_en_el_registro(repo, tmp_path, capsys):
     sup.paso()
     repo.pedir_parada()
     sup.paso()
-    sup.log("prueba de redacción:", "Bearer tok3n-secreto")
     err = capsys.readouterr().err
     assert repo.reunion(rid)["motivo"] == "token"
-    assert "tok3n-secreto" not in err and "Bearer ***" in err
+    assert "reunión en error: token" in err and "tok3n-secreto" not in err
 
 
 def test_envio_sin_respuesta_tiene_plazo(entorno):
@@ -456,6 +455,7 @@ def test_una_fila_grabando_sin_grabador_se_recupera(entorno):
     (entorno[5] / rid / "socioa_1000.webm").write_bytes(b"opus")  # lo que llegó a grabarse
     sup.paso()
     assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "sin_grabador")
+    assert entorno[3].errores_total == 1  # una grabación cortada avisa (ActasReunionEnError)
 
 
 def test_al_arrancar_se_rescata_la_grabacion_en_curso(entorno):
@@ -478,3 +478,41 @@ def test_al_arrancar_se_rescata_la_grabacion_en_curso(entorno):
     r = repo.reunion(rid)
     assert (r["estado"], r["motivo"]) == ("grabada", "reinicio_supervisor")
     assert list((raiz / rid).iterdir())  # lo grabado se descargó y se enviará
+
+
+def test_un_fallo_pasajero_de_la_base_al_guardar_no_pierde_la_transcripcion(repo, tmp_path):
+    import psycopg
+
+    GrabacionFalsa.creadas = []
+    plataforma = PlataformaFalsa()
+
+    class RepoQueFallaAlGuardar(RepoQueFallaUnaVez):
+        def guardar_transcripcion(self, rid, segmentos):
+            if self.fallos == 0:
+                self.fallos += 1
+                raise psycopg.OperationalError("conexión perdida")
+            return self._repo.guardar_transcripcion(rid, segmentos)
+
+    envuelto = RepoQueFallaAlGuardar(repo, "ninguno")
+    reloj = Reloj()
+    sup = Supervisor(
+        repo=envuelto,
+        plataforma=plataforma,
+        nueva_grabacion=lambda s, d: GrabacionFalsa(s, d),
+        raiz=tmp_path,
+        registro=Registro(),
+        metricas=Metricas(),
+        reloj=reloj,
+    )
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    plataforma.respuestas_estado = [listo([{"hablante_id": "h1", "inicio_ms": 0, "fin_ms": 5, "texto": "hola"}])]
+    reloj.t += 60
+    with pytest.raises(psycopg.OperationalError):
+        sup.paso()
+    assert repo.reunion(rid)["estado"] == "transcribiendo"
+    reloj.t += 60
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "transcrita"

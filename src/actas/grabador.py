@@ -180,8 +180,21 @@ class Grabacion:
 
     def _cerrar(self) -> None:
         """Cierra las páginas y deja de aceptar descargas: fuera de una grabación, nada escribe en /grabaciones."""
-        for t, _ in self.paginas.values():
-            self.cdp.cerrar_pagina(t)
+        objetivos = {t for t, _ in self.paginas.values()}
+        # Chromium responde «success» a closeTarget pero no cierra una página que aún está navegando (medido con el headless
+        # shell 1248): se repite hasta que ya no está, como mucho 5 s.
+        limite = time.monotonic() + 5
+        while objetivos and time.monotonic() < limite:
+            for t in objetivos:
+                self.cdp.cerrar_pagina(t)
+            time.sleep(0.2)
+            try:
+                vivos = {t["targetId"] for t in self.cdp.enviar("Target.getTargets", espera=5)["targetInfos"]}
+            except Exception:  # noqa: BLE001
+                break
+            objetivos &= vivos
+        if objetivos:
+            self.registro("páginas que no se cerraron:", len(objetivos))
         try:
             self.cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"}, espera=10)
         except Exception as e:  # noqa: BLE001

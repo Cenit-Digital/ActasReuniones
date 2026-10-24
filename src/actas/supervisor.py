@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+import psycopg
+
 from actas.aviso import sin_coincidencia
 from actas.base import Repositorio
 from actas.conformidad import ConformidadNoValida, validar
@@ -95,6 +97,7 @@ class Supervisor:
             except Exception as e:  # noqa: BLE001 — Chromium también se reinició: no hay nada que rescatar
                 self.log("no se pudo retomar la grabación:", type(e).__name__)
             self.repo.mover(r["id"], Estado.GRABANDO, Estado.GRABADA, motivo="reinicio_supervisor", fin=True)
+            self.metricas.sumar("errores_total")  # la grabación se cortó a mitad: que avise
         self.purgar()
 
     def terminar(self) -> None:
@@ -124,6 +127,8 @@ class Supervisor:
         `error` en lugar de tumbar la vuelta entera: si no, se repetiría en cada vuelta y la sonda reiniciaría el contenedor."""
         try:
             etapa(r)
+        except psycopg.OperationalError:
+            raise  # la base caída un momento: la vuelta siguiente lo reintenta tal cual (sin perder el texto ni el trabajo)
         except Exception as e:  # noqa: BLE001
             self.log("fallo inesperado con una reunión:", type(e).__name__)
             self.envios.pop(r["id"], None)
@@ -135,6 +140,7 @@ class Supervisor:
         pasa a `grabada` y se envía lo que haya. Sin esto, el índice de una sola grabación activa bloquearía las siguientes."""
         for r in self.repo.en_estado(Estado.GRABANDO):
             self.repo.mover(r["id"], Estado.GRABANDO, Estado.GRABADA, motivo="sin_grabador", fin=True)
+            self.metricas.sumar("errores_total")
             self.log("reunión sin grabador recuperada")
 
     def _atender_pedida(self) -> None:

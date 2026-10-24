@@ -61,6 +61,10 @@ def sala_falsa():
     srv.shutdown()
 
 
+def paginas_de(cdp, base):
+    return [t for t in cdp.enviar("Target.getTargets")["targetInfos"] if t["url"].startswith(base)]
+
+
 def test_grabar_vistos_y_parada_ordenada(chromium, sala_falsa, tmp_path):
     sala = Sala("salaprueba", "clave secreta", base=sala_falsa + "?publican=socioa,x7kq2lm&retardo=1500&")
     lineas: list[str] = []
@@ -74,8 +78,7 @@ def test_grabar_vistos_y_parada_ordenada(chromium, sala_falsa, tmp_path):
     assert [p.socio for p in pistas_de(ficheros, ["socioa", "sociob"])] == sorted(["socioa", "sociob"])
     assert (tmp_path / "reunion" / ficheros[0]).read_bytes().startswith(b"opus de ")
     assert not any("clave" in linea for linea in lineas)
-    targets = cdp.enviar("Target.getTargets")["targetInfos"]
-    assert not [t for t in targets if t["url"].startswith(sala_falsa)]  # las páginas de la sala se cerraron
+    assert not paginas_de(cdp, sala_falsa)  # las páginas de la sala se cerraron
     cdp.cerrar()
 
 
@@ -104,8 +107,7 @@ def test_si_falla_una_pagina_al_empezar_se_cierran_las_ya_abiertas(chromium, sal
     g = Grabacion(cdp, sala, ("socioa", "sociob"), tmp_path / "r", lambda *p: None)
     with pytest.raises(RuntimeError):
         g.empezar()
-    targets = cdp.enviar("Target.getTargets")["targetInfos"]
-    assert not [t for t in targets if t["url"].startswith(sala_falsa)]
+    assert not paginas_de(cdp, sala_falsa)
     assert cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"}) == {}  # Chromium sigue usable
     cdp.cerrar()
 
