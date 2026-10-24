@@ -160,9 +160,9 @@ class Grabacion:
     def parar(self) -> bool:
         """Parada ordenada. True solo si hubo grabaciones y todas sus descargas terminaron (`completed`).
 
-        `recorder.stop()` es asíncrono: se espera a que empiecen tantas descargas como grabaciones se pararon (con el plazo de
-        ESPERA_DESCARGAS_S) y luego a que terminen. Sin ninguna descarga no es un éxito."""
-        antes = len(self.descargas)
+        VDO.Ninja graba con StreamSaver: la descarga empieza (downloadWillBegin) al empezar a grabar y termina al parar
+        (downloadProgress completed). Se espera, con el plazo de ESPERA_DESCARGAS_S, a que haya al menos una descarga por
+        grabación parada y a que ninguna siga a medias. Sin ninguna descarga no es un éxito."""
         paradas = 0
         for s, (_, ses) in self.paginas.items():
             try:
@@ -172,11 +172,10 @@ class Grabacion:
             except Exception as e:  # noqa: BLE001
                 self.registro("parar", s, type(e).__name__)
         limite = time.monotonic() + ESPERA_DESCARGAS_S
-        while time.monotonic() < limite and (len(self.descargas) < antes + paradas or "empezada" in self.descargas.values()):
+        while time.monotonic() < limite and (len(self.descargas) < paradas or "empezada" in self.descargas.values()):
             time.sleep(0.5)
         self._cerrar()
-        completas = len(self.descargas) >= antes + paradas
-        return bool(self.descargas) and completas and all(v == "completed" for v in self.descargas.values())
+        return bool(self.descargas) and len(self.descargas) >= paradas and all(v == "completed" for v in self.descargas.values())
 
     def _cerrar(self) -> None:
         """Cierra las páginas y deja de aceptar descargas: fuera de una grabación, nada escribe en /grabaciones."""
