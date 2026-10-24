@@ -13,10 +13,15 @@ import sys
 from actas.base import Repositorio
 from actas.conformidad import ConformidadNoValida, validar
 
+_ARGUMENTOS = {"grabar": 3, "parar": 1, "estado": 1, "reintentar": 2}
+
 
 def main(args: list[str], repo: Repositorio | None = None) -> int:
-    repo = repo or Repositorio(os.environ["ACTAS_DSN"])
     orden = args[0] if args else ""
+    if _ARGUMENTOS.get(orden) != len(args):
+        print(__doc__, file=sys.stderr)
+        return 2
+    repo = repo or Repositorio(os.environ["ACTAS_DSN"])
     if orden == "grabar" and len(args) == 3:
         try:
             peticion = validar([s for s in args[1].split(",") if s], args[2])
