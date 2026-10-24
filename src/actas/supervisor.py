@@ -120,6 +120,7 @@ class Supervisor:
         if self.reloj() - self.ultima_purga_s >= PURGA_S:
             self.purgar()
         self.metricas.por_estado = self.repo.cuenta_por_estado()
+        self.metricas.grabaciones_bytes = self._ocupacion()
         self.metricas.ultimo_paso_s = self.reloj()
 
     def _a_salvo(self, etapa: Callable[[dict[str, Any]], None], r: dict[str, Any], estado: Estado) -> None:
@@ -319,6 +320,18 @@ class Supervisor:
             ficheros, octetos = 1, st.st_size
             d.unlink()
         self.repo.anotar_purga(nombre if _es_reunion(nombre) else None, motivo, ficheros, octetos)
+
+    def _ocupacion(self) -> int:
+        """Bytes en el tmpfs, sin seguir enlaces: si se acerca al sizeLimit, el kubelet desalojaría el pod y la grabación."""
+        total = 0
+        if self.raiz.is_dir():
+            for raiz, _, archivos in os.walk(self.raiz, followlinks=False):
+                for a in archivos:
+                    try:
+                        total += os.lstat(os.path.join(raiz, a)).st_size
+                    except OSError:
+                        pass
+        return total
 
     def purgar(self, mtime: Callable[[Path], float] | None = None) -> None:
         """@a10: borra el audio de las reuniones transcritas, el de más de 7 días (contados desde la base) y lo que no es de

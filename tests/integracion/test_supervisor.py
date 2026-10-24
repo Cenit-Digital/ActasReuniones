@@ -516,3 +516,13 @@ def test_un_fallo_pasajero_de_la_base_al_guardar_no_pierde_la_transcripcion(repo
     reloj.t += 60
     sup.paso()
     assert repo.reunion(rid)["estado"] == "transcrita"
+
+
+def test_ocupacion_del_tmpfs_en_las_metricas(entorno):
+    sup, repo, plataforma, metricas, reloj, raiz = entorno
+    plataforma.respuesta_crear = (503, None)
+    repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()  # la falsa deja un fichero de 4 bytes
+    assert metricas.grabaciones_bytes == 4

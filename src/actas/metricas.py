@@ -20,6 +20,7 @@ class Metricas:
         self.tope_total = 0
         self.transcritas_total = 0
         self.ultimo_paso_s = 0.0
+        self.grabaciones_bytes = 0
         self.por_estado: dict[str, int] = {}
 
     def sumar(self, nombre: str, n: int = 1) -> None:
@@ -47,6 +48,9 @@ class Metricas:
                 "# HELP actas_ultimo_paso_segundos Momento (epoch) de la última vuelta completa del supervisor.",
                 "# TYPE actas_ultimo_paso_segundos gauge",
                 f"actas_ultimo_paso_segundos {self.ultimo_paso_s:.0f}",
+                "# HELP actas_grabaciones_bytes Ocupación del tmpfs de las grabaciones (sizeLimit 768Mi: al llenarse, desalojo).",
+                "# TYPE actas_grabaciones_bytes gauge",
+                f"actas_grabaciones_bytes {self.grabaciones_bytes}",
                 "# TYPE actas_reuniones gauge",
             ]
             lineas += [f'actas_reuniones{{estado="{e.value}"}} {self.por_estado.get(e.value, 0)}' for e in Estado]

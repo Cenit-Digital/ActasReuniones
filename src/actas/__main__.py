@@ -17,7 +17,7 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 
-from actas import base
+from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium
 from actas.grabador import Grabacion, Sala
 from actas.metricas import Metricas, servir
@@ -92,13 +92,11 @@ def main() -> None:
     token = Path(e["ACTAS_TOKEN_FICHERO"]).read_text(encoding="utf-8").strip()
     sala = Sala.del_entorno()
     registro = registro_del_entorno(e, token)
-    aplicadas = base.migrar(e["ACTAS_DSN_MIGRACIONES"], password=e["ACTAS_MIGRACIONES_PASSWORD"])
-    registro("migraciones aplicadas:", ", ".join(aplicadas) or "ninguna")
     metricas = Metricas()
     servir(metricas, int(e.get("ACTAS_PUERTO_METRICAS", "9101")))
     cdp_url = e.get("ACTAS_CDP", "http://127.0.0.1:9222")
     sup = Supervisor(
-        repo=base.Repositorio(e["ACTAS_DSN"]),
+        repo=Repositorio(e["ACTAS_DSN"]),
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
         nueva_grabacion=lambda socios, destino: _GrabacionConCdp(cdp_url, sala, socios, destino, registro),
         raiz=Path(e.get("ACTAS_GRABACIONES", "/grabaciones")),

@@ -19,7 +19,7 @@ Reglas que no se negocian:
 | Ruta | Qué contiene |
 | --- | --- |
 | `src/actas/` | Módulos puros (`pistas`, `conformidad`, `estados`, `purga`, `sondeo`, `registro`, `aviso`, `transcripcion`) y adaptadores (`cdp`, `grabador`, `base`, `plataforma`, `metricas`), el bucle del supervisor (`supervisor`, `__main__`) y las órdenes de `actas.sh` (`cli`) |
-| `migraciones/` | Esquema del inquilino `actas` del PostgreSQL compartido (lo aplica `actas_owner` al arrancar) |
+| `migraciones/` | Esquema del inquilino `actas` del PostgreSQL compartido (lo aplica `actas_owner` en el initContainer, `python -m actas.migrar`) |
 | `tests/unit/` · `tests/integracion/` | Unitarios (objetivo de la mutación) e integración con PostgreSQL (`ACTAS_DSN_PRUEBAS`, `scripts/pg-pruebas.sh`) y con Chromium (`ACTAS_CHROMIUM`) |
 | `cosmic-ray.toml` | Módulos que se mutan (umbral 0,8) |
 | `Dockerfile` · `.github/workflows/imagen.yml` | Imagen `ghcr.io/cenit-digital/actas-supervisor`, publicada por `:sha-<commit>` y desplegada por digest |
