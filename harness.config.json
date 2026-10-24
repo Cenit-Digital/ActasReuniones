@@ -1,13 +1,13 @@
 {
   "$schema": "./harness.schema.json",
-  "project": "mi-proyecto",
-  "language": "generic",
-  "description": "Rellena este archivo con los comandos de TU stack. Es el único punto que hace al arnés dependiente del lenguaje. Ver docs/configuration.md y los adaptadores por stack en .harness/adapters/.",
+  "project": "actas-reuniones",
+  "language": "python",
+  "description": "Actas de las reuniones de socios: supervisor del grabador (Chromium por CDP) y cliente de la plataforma de transcripción. Python 3.12 con uv; PostgreSQL efímero para los tests de integración (scripts/pg-pruebas.sh).",
   "commands": {
-    "install": "",
-    "lint": "",
-    "test": "",
-    "mutate": "",
+    "install": "uv sync --locked",
+    "lint": "uv run --locked ruff check && uv run --locked ruff format --check && uv run --locked mypy",
+    "test": "uv run --locked pytest",
+    "mutate": "uv run --locked cosmic-ray init cosmic-ray.toml mutantes.sqlite --force && uv run --locked cosmic-ray exec cosmic-ray.toml mutantes.sqlite && uv run --locked cr-rate mutantes.sqlite --fail-over 20",
     "build": ""
   },
   "paths": {
@@ -19,7 +19,7 @@
     "targets": []
   },
   "rules": {
-    "require_tests_to_close": false,
+    "require_tests_to_close": true,
     "require_mutation_to_close": false
   }
 }

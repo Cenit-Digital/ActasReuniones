@@ -1,0 +1,20 @@
+# Prueba de mutación (Cosmic Ray 8.7): los módulos de lógica pura que fija el plan de F1 (KubernetesInfrastructure#223).
+# `bin/harness mutate` → init (con --force) + exec + `cr-rate --fail-over 20` (≥ 80 % de mutantes muertos).
+# Los adaptadores (CDP, PostgreSQL, HTTP y el bucle del supervisor) tienen tests de integración y no se mutan.
+[cosmic-ray]
+module-path = [
+    "src/actas/pistas.py",
+    "src/actas/conformidad.py",
+    "src/actas/estados.py",
+    "src/actas/purga.py",
+    "src/actas/sondeo.py",
+    "src/actas/registro.py",
+    "src/actas/aviso.py",
+    "src/actas/transcripcion.py",
+]
+timeout = 30.0
+excluded-modules = []
+test-command = "python -m pytest -x -q -p no:cacheprovider tests/unit/test_pistas.py tests/unit/test_conformidad.py tests/unit/test_estados.py tests/unit/test_purga.py tests/unit/test_sondeo.py tests/unit/test_registro.py tests/unit/test_aviso.py tests/unit/test_transcripcion.py"
+
+[cosmic-ray.distributor]
+name = "local"

@@ -38,6 +38,19 @@ jobs:
         with:
           node-version: "22"
           package-manager-cache: false # sin caché automático: falla con "packageManager: pnpm" (ver pr-body.yml)
+      # `init` ejecuta el lint y los tests del proyecto (harness.config.json), que van con uv. Mismo paso que la plataforma de
+      # transcripción: binario de la release de uv verificado por SHA256 y Python 3.12 gestionado por uv.
+      - &uv
+        name: Instalar uv 0.13.5 (verificado por SHA256) y Python 3.12
+        run: |
+          curl -fsSLo /tmp/uv.tgz https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz
+          echo "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f  /tmp/uv.tgz" | sha256sum -c -
+          base="$RUNNER_TEMP/herramientas"
+          mkdir -p "$base/bin" && tar -xzf /tmp/uv.tgz -C "$base/bin" --strip-components=1
+          echo "$base/bin" >> "$GITHUB_PATH"
+          echo "UV_CACHE_DIR=$base/uv-cache" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_INSTALL_DIR=$base/uv-python" >> "$GITHUB_ENV"
+          UV_PYTHON_INSTALL_DIR="$base/uv-python" UV_CACHE_DIR="$base/uv-cache" "$base/bin/uv" python install --no-bin 3.12
       - &init
         run: node .harness/harness.mjs init
       - &tests_plantilla
@@ -64,6 +77,7 @@ jobs:
     steps:
       - *checkout
       - *setup_node
+      - *uv
       - *init
       - *tests_plantilla
 
@@ -78,3 +92,57 @@ jobs:
       - *checkout
       - *setup_node
       - *motor
+
+  # ── Proyecto: actas (Python) ─────────────────────────────────────────────────────────────────────────────────────────
+  # Repo público: estos minutos de Actions no cuentan para el cupo de la organización. Imágenes y acciones por digest/hash.
+  python:
+    name: Python (lint, tests y PostgreSQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      # uv 0.13.5 con Python 3.12 (trixie-slim), índice multiplataforma leído con `crane digest` el 2026-10-24.
+      image: ghcr.io/astral-sh/uv:0.13.5-python3.12-trixie-slim@sha256:9b8477a5f2e2f96fa99eaecb7680c1c4c9f527926430f3b630bfb2c3641f8f20
+    services:
+      postgres:
+        # La misma imagen que el PostgreSQL compartido del servidor (ADR 0019 de KubernetesInfrastructure).
+        image: docker.io/library/postgres:18.6-trixie@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+        env:
+          POSTGRES_PASSWORD: pruebas
+          POSTGRES_DB: actas_pruebas
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      ACTAS_DSN_PRUEBAS: postgresql://postgres:pruebas@postgres/actas_pruebas
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - run: uv sync --locked
+      - name: requirements-ci.txt al día con uv.lock (lo usa el job grabador, con hashes)
+        run: uv export --frozen --no-emit-project --format requirements.txt --no-header -q | diff - requirements-ci.txt
+      - name: Lint
+        run: uv run --locked ruff check && uv run --locked ruff format --check && uv run --locked mypy
+      - name: Tests (unitarios e integración con PostgreSQL; el grabador se salta aquí)
+        run: uv run --locked pytest -rs
+
+  grabador:
+    name: Grabador con el Chromium de producción
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      # La misma imagen que el contenedor `chromium` del supervisor (KubernetesInfrastructure, kubernetes/apps/actas):
+      # mcr.microsoft.com/playwright/python:v1.63.0-noble (Chromium 1243).
+      image: mcr.microsoft.com/playwright/python@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0
+    env:
+      ACTAS_CHROMIUM: /ms-playwright/chromium-1243/chrome-linux64/chrome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Dependencias con sus hashes (requirements-ci.txt, exportado de uv.lock)
+        run: python3 -m pip install --break-system-packages --quiet --require-hashes --no-deps -r requirements-ci.txt
+      - name: Test del grabador (CDP por WebSocket y descargas)
+        env:
+          PYTHONPATH: src
+        run: python3 -m pytest -rs tests/integracion/test_grabador.py

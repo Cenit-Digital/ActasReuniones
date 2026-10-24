@@ -5,25 +5,26 @@
 
 ## 1. Resumen del proyecto
 
-Plantilla de **desarrollo guiado por especificaciones (SSD)**, agnóstica al lenguaje: una política de trabajo (niveles de tarea, puerta humana en dos puntos, delegación por capacidad), un motor mínimo que ejecuta los comandos de tu stack y plantillas de issue y PR. Solo `harness.config.json` cambia por proyecto. Se versiona por tag y se propaga a los derivados con `scripts/harness-upgrade.mjs`.
+**Actas de las reuniones de socios de Cenit Digital**, F1 de la [decisión 0015 de KubernetesInfrastructure](https://github.com/Cenit-Digital/KubernetesInfrastructure/blob/main/docs/infraestructura/decisiones/0015-actas-de-reuniones.md) (issue KubernetesInfrastructure#223). Un supervisor en Python atiende las peticiones de grabar y parar que llegan por PostgreSQL. Controla por CDP un Chromium sin cabeza con una página espectadora de VDO.Ninja por socio conforme. Al parar, envía las pistas a la plataforma de transcripción (decisión 0017 de KubernetesInfrastructure, apartado de actas) y guarda el texto en el archivo de actas. El despliegue (espacio `actas`, red, Secrets) vive en KubernetesInfrastructure, `kubernetes/apps/actas/`.
 
-*Proyecto derivado: sustituye las secciones 1 y 2 por las de tu proyecto; la 3, la 4 y la 5 sirven tal cual. El `/init` de tu herramienta te da un primer borrador (en Claude Code, vuélcalo en `AGENTS.md`, no en `CLAUDE.md`); recórtalo a estas cinco secciones.*
+Reglas que no se negocian:
+- Son datos personales (voz y palabras de los socios).
+- Ningún secreto ni texto de la reunión en los registros: la contraseña de la sala y el token se redactan.
+- Solo se graba a los socios conformes de cada reunión.
+- El audio vive en un tmpfs y se borra en cuanto el texto está guardado, o como mucho a los 7 días.
+- Chromium nunca recibe el token ni las credenciales de la base.
 
 ## 2. Ficheros clave
 
 | Ruta | Qué contiene |
 | --- | --- |
-| `harness.config.json` | Los comandos de tu stack (instalar, test, lint, mutación, build): el único punto que depende del lenguaje (`docs/configuration.md`) |
-| `src/` · `tests/` | Código de la aplicación y sus tests |
-| `features/<capacidad>.feature` | Spec viva de una capacidad (Given/When/Then); el PR que cambia la capacidad actualiza su `.feature` |
-| `docs/` | Detalle por tema: `tdd`, `gherkin`, `verification`, `conventions`, `architecture`, `mutation-testing`, `tooling` y `modelos` (qué modelo es cada nivel en cada herramienta) |
-| `CHECKPOINTS.md` | Criterios objetivos de «estado final correcto», para autoevaluarte |
-| `.claude/agents/` | Agentes de nivel (`worker_fast`, `worker_balanced`, `reviewer_frontier`) y especialistas opt-in de solo lectura |
-| `.github/agents/` · `.codex/agents/` · `.opencode/agents/` | Los tres agentes de nivel para Copilot, Codex y OpenCode, con el mismo cuerpo que los de `.claude/agents/`; el modelo de cada herramienta, en `docs/modelos.md` |
-| `.github/` | Plantillas de issue de tarea y de PR, y el check «Cuerpo del PR» (`node .harness/pr-body.mjs`) |
-| `harness.manifest.json` · `scripts/harness-upgrade.mjs` | Qué es de la plantilla y qué del proyecto; `--check` y `--diff` miran la deriva, `--apply` la reemplaza |
-| `.harness/impacto-tareas.mjs` | Candidatos de «Impacto en tareas anteriores»: PR e issues previos que tocaron los mismos ficheros (sin LLM, con tope fijo) |
-| `docs/memoria-organizacional.md` · `docs/instrucciones-de-usuario.md` · `docs/autonomous.md` | Memoria de la organización, plantilla de instrucciones de usuario y bot de auto-mejora |
+| `src/actas/` | Módulos puros (`pistas`, `conformidad`, `estados`, `purga`, `sondeo`, `registro`, `aviso`, `transcripcion`) y adaptadores (`cdp`, `grabador`, `base`, `plataforma`, `metricas`), el bucle del supervisor (`supervisor`, `__main__`) y las órdenes de `actas.sh` (`cli`) |
+| `migraciones/` | Esquema del inquilino `actas` del PostgreSQL compartido (lo aplica `actas_owner` en el initContainer, `python -m actas.migrar`) |
+| `tests/unit/` · `tests/integracion/` | Unitarios (objetivo de la mutación) e integración con PostgreSQL (`ACTAS_DSN_PRUEBAS`, `scripts/pg-pruebas.sh`) y con Chromium (`ACTAS_CHROMIUM`) |
+| `cosmic-ray.toml` | Módulos que se mutan (umbral 0,8) |
+| `Dockerfile` · `.github/workflows/imagen.yml` | Imagen `ghcr.io/cenit-digital/actas-supervisor`, publicada por `:sha-<commit>` y desplegada por digest |
+| `features/actas.feature` | Spec viva de la captura y la transcripción |
+| `harness.config.json` | Conecta `lint`, `test` y `mutate` del arnés con uv |
 
 ## 3. Desarrollo y validación
 
