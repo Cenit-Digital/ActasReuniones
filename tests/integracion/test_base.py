@@ -1,7 +1,9 @@
 """@a6, @a8 y @a10 contra PostgreSQL de verdad: el bus de peticiones y el archivo de la reunión."""
 
 import psycopg
+import psycopg.conninfo
 import pytest
+from psycopg import sql
 
 from actas import base
 from actas.conformidad import Peticion
@@ -127,6 +129,20 @@ def test_cuenta_por_estado(repo):
 
 
 def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
-    # Con espacios o comillas, interpolada en el conninfo rompería el análisis (y permitiría inyectar parámetros de libpq).
+    # Con espacios o comillas, interpolada en el conninfo rompería el análisis (y permitiría inyectar parámetros de libpq). Un
+    # rol propio con esa contraseña: en la CI el servidor la exige de verdad (scram); en local, con trust, se prueba el análisis.
     url, esquema = dsn
-    assert base.migrar(url, esquema, password="con espacio' y comilla") == ["0001_esquema.sql"]
+    rol, clave = "actas_migra_" + esquema[-8:], "con espacio' y comilla"
+    with psycopg.connect(url, autocommit=True) as c:
+        c.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(rol), sql.Literal(clave)))
+        c.execute(sql.SQL("ALTER SCHEMA {} OWNER TO {}").format(sql.Identifier(esquema), sql.Identifier(rol)))
+        base_datos = c.execute("SELECT current_database()").fetchone()[0]
+        c.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(base_datos), sql.Identifier(rol)))
+    try:
+        dsn_rol = psycopg.conninfo.make_conninfo(url, user=rol, password=None)
+        assert base.migrar(dsn_rol, esquema, password=clave) == ["0001_esquema.sql"]
+    finally:
+        with psycopg.connect(url, autocommit=True) as c:
+            c.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(esquema)))
+            c.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(esquema)))
+            c.execute(sql.SQL("DROP OWNED BY {}; DROP ROLE {}").format(sql.Identifier(rol), sql.Identifier(rol)))

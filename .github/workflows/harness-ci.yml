@@ -38,6 +38,19 @@ jobs:
         with:
           node-version: "22"
           package-manager-cache: false # sin caché automático: falla con "packageManager: pnpm" (ver pr-body.yml)
+      # `init` ejecuta el lint y los tests del proyecto (harness.config.json), que van con uv. Mismo paso que la plataforma de
+      # transcripción: binario de la release de uv verificado por SHA256 y Python 3.12 gestionado por uv.
+      - &uv
+        name: Instalar uv 0.13.5 (verificado por SHA256) y Python 3.12
+        run: |
+          curl -fsSLo /tmp/uv.tgz https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz
+          echo "f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f  /tmp/uv.tgz" | sha256sum -c -
+          base="$RUNNER_TEMP/herramientas"
+          mkdir -p "$base/bin" && tar -xzf /tmp/uv.tgz -C "$base/bin" --strip-components=1
+          echo "$base/bin" >> "$GITHUB_PATH"
+          echo "UV_CACHE_DIR=$base/uv-cache" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_INSTALL_DIR=$base/uv-python" >> "$GITHUB_ENV"
+          UV_PYTHON_INSTALL_DIR="$base/uv-python" UV_CACHE_DIR="$base/uv-cache" "$base/bin/uv" python install --no-bin 3.12
       - &init
         run: node .harness/harness.mjs init
       - &tests_plantilla
@@ -64,6 +77,7 @@ jobs:
     steps:
       - *checkout
       - *setup_node
+      - *uv
       - *init
       - *tests_plantilla
 

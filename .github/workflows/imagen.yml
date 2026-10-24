@@ -59,7 +59,8 @@ jobs:
         run: |
           set -euo pipefail
           r() { docker run --rm --read-only --tmpfs /tmp --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges "$PRUEBA" "$@"; }
-          r actas.cli 2>&1 | grep -q "python -m actas.cli grabar"
+          # Sin argumentos, la orden imprime su ayuda y sale con 2: se comprueba la ayuda, no el código.
+          { r actas.cli 2>&1 || true; } | grep -q "python -m actas.cli grabar"
           # Las migraciones van dentro del paquete instalado.
           docker run --rm --read-only --user 1000:1000 --entrypoint /opt/actas/venv/bin/python "$PRUEBA" -I -c \
             "from actas import base; assert [n for n, _ in base._migraciones()] == ['0001_esquema.sql']"
