@@ -54,7 +54,18 @@ def test_marca_igual_para_dos_socios_desfase_cero_en_los_dos():
     assert [p.socio for p in resultado] == ["socioa", "sociob"]
 
 
-@pytest.mark.parametrize("nombre", ["Socioa_1000.webm", "socio-a_1000.webm", "socioa_.webm", "socioa_1000.ogg", "_1000.webm"])
+@pytest.mark.parametrize(
+    "nombre",
+    [
+        "socioa_1000.webm\n",
+        "socioa_\u0661\u0662.webm",
+        "Socioa_1000.webm",
+        "socio-a_1000.webm",
+        "socioa_.webm",
+        "socioa_1000.ogg",
+        "_1000.webm",
+    ],
+)
 def test_nombres_que_no_son_pistas(nombre):
     with pytest.raises(PistasNoValidas):
         pistas_de([nombre], ["socioa"])

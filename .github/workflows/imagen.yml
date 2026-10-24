@@ -114,6 +114,20 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+      # La publicada se reconstruye desde las mismas entradas fijadas y la caché del job imagen: se escanea otra vez, ya en el
+      # registro y por su digest, para que lo escaneado sea exactamente lo que se despliega.
+      - name: Vulnerabilidades de la imagen publicada (por digest)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.IMAGEN }}@${{ steps.publicar.outputs.digest }}
+          version: v0.70.0
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
       - name: Referencia por digest
         env:
           DIGEST: ${{ steps.publicar.outputs.digest }}

@@ -9,7 +9,9 @@ Cada vuelta (cada 5 s):
 La purga del audio de más de 7 días y del huérfano corre al arrancar y cada hora.
 """
 
+import os
 import shutil
+import stat
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ PURGA_S = 3600
 
 class Grabador(Protocol):
     def empezar(self) -> None: ...
+    def reanudar(self) -> None: ...
     def vistos(self) -> dict[str, list[str]]: ...
     def viva(self) -> bool: ...
     def parar(self) -> bool: ...
@@ -50,6 +53,7 @@ class _Activa:
     grabador: Grabador
     inicio_s: float
     ultima_vigilancia_s: float
+    parada: str | None = None  # motivo de una parada ya hecha cuyo cambio de estado aún no llegó a la base
 
 
 @dataclass
@@ -80,10 +84,17 @@ class Supervisor:
     # ── Arranque y parada del proceso ─────────────────────────────────────────────────────────────────────────────────
 
     def arrancar(self) -> None:
-        """Una reunión que figura `grabando` al arrancar perdió su grabador (reinicio del pod o del contenedor): pasa a
-        `error` y su audio, si lo hay, se conserva para `actas.sh reintentar` dentro del plazo de 7 días."""
+        """Una reunión que figura `grabando` al arrancar perdió su supervisor (reinicio del contenedor o del pod). Si Chromium
+        sigue vivo con sus páginas, se paran de forma ordenada para no perder lo grabado; en todo caso pasa a `grabada` con el
+        motivo `reinicio_supervisor` y se envía lo que haya (sin nada, acaba en `error: pistas`)."""
         for r in self.repo.en_estado(Estado.GRABANDO):
-            self._error(r["id"], Estado.GRABANDO, "reinicio_supervisor")
+            grabador = self.nueva_grabacion(tuple(r["socios"]), self.raiz / r["id"])
+            try:
+                grabador.reanudar()
+                grabador.parar()
+            except Exception as e:  # noqa: BLE001 — Chromium también se reinició: no hay nada que rescatar
+                self.log("no se pudo retomar la grabación:", type(e).__name__)
+            self.repo.mover(r["id"], Estado.GRABANDO, Estado.GRABADA, motivo="reinicio_supervisor", fin=True)
         self.purgar()
 
     def terminar(self) -> None:
@@ -97,15 +108,34 @@ class Supervisor:
         if self.activa:
             self._vigilar()
         else:
+            self._recuperar_huerfanas()
             self._atender_pedida()
         for r in self.repo.en_estado(Estado.GRABADA):
-            self._enviar(r)
+            self._a_salvo(self._enviar, r, Estado.GRABADA)
         for r in self.repo.en_estado(Estado.TRANSCRIBIENDO):
-            self._consultar(r)
+            self._a_salvo(self._consultar, r, Estado.TRANSCRIBIENDO)
         if self.reloj() - self.ultima_purga_s >= PURGA_S:
             self.purgar()
         self.metricas.por_estado = self.repo.cuenta_por_estado()
         self.metricas.ultimo_paso_s = self.reloj()
+
+    def _a_salvo(self, etapa: Callable[[dict[str, Any]], None], r: dict[str, Any], estado: Estado) -> None:
+        """Un fallo inesperado con una reunión (una respuesta con forma rara, un dato que la base no admite) la lleva a
+        `error` en lugar de tumbar la vuelta entera: si no, se repetiría en cada vuelta y la sonda reiniciaría el contenedor."""
+        try:
+            etapa(r)
+        except Exception as e:  # noqa: BLE001
+            self.log("fallo inesperado con una reunión:", type(e).__name__)
+            self.envios.pop(r["id"], None)
+            self.sondeos.pop(r["id"], None)
+            self._error(r["id"], estado, "interno")
+
+    def _recuperar_huerfanas(self) -> None:
+        """Sin grabación activa no puede haber ninguna fila `grabando` (p. ej., un error al empezar que no llegó a la base):
+        pasa a `grabada` y se envía lo que haya. Sin esto, el índice de una sola grabación activa bloquearía las siguientes."""
+        for r in self.repo.en_estado(Estado.GRABANDO):
+            self.repo.mover(r["id"], Estado.GRABANDO, Estado.GRABADA, motivo="sin_grabador", fin=True)
+            self.log("reunión sin grabador recuperada")
 
     def _atender_pedida(self) -> None:
         r = self.repo.siguiente(Estado.PEDIDA)
@@ -114,6 +144,10 @@ class Supervisor:
         try:
             peticion = validar(list(r["socios"]), r["texto_version"])
         except ConformidadNoValida:
+            self._error(r["id"], Estado.PEDIDA, "conformidad")
+            return
+        # @a6: cada socio con su fila de conformidad de esta reunión y de la misma versión del texto informativo.
+        if self.repo.conformidades(r["id"]) != [(s, peticion.version) for s in peticion.socios]:
             self._error(r["id"], Estado.PEDIDA, "conformidad")
             return
         grabador = self.nueva_grabacion(peticion.socios, self.raiz / r["id"])
@@ -135,6 +169,9 @@ class Supervisor:
     def _vigilar(self) -> None:
         assert self.activa is not None
         a = self.activa
+        if a.parada:  # la parada ya se hizo; solo falta anotarla en la base
+            self._anotar_parada(a)
+            return
         r = self.repo.reunion(a.rid)
         motivo = motivo_parada(a.inicio_s, self.reloj(), r["parar_pedido_en"] is not None)
         if motivo is None and not a.grabador.viva():
@@ -158,18 +195,25 @@ class Supervisor:
 
     def _parar(self, motivo: str) -> None:
         assert self.activa is not None
-        a, self.activa = self.activa, None
+        a = self.activa
         try:
             completas = a.grabador.parar()
         except Exception as e:  # noqa: BLE001 — la reunión no puede quedarse «grabando»: se envía lo que haya
             self.log("la parada falló:", type(e).__name__)
             completas = False
-        self.metricas.grabando = self.metricas.aviso_sin_coincidencia = 0
-        self.metricas.socios_esperados = self.metricas.socios_vistos = 0
         if not completas:
             self.log("alguna descarga no terminó: se envía lo que haya")
-        self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=motivo, fin=True)
-        self.log("grabación parada:", motivo)
+        a.parada = motivo
+        self._anotar_parada(a)
+
+    def _anotar_parada(self, a: _Activa) -> None:
+        """Si la base falla aquí, la grabación sigue «activa» con la parada hecha y la vuelta siguiente lo reintenta."""
+        assert a.parada is not None
+        self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=a.parada, fin=True)
+        self.activa = None
+        self.metricas.grabando = self.metricas.aviso_sin_coincidencia = 0
+        self.metricas.socios_esperados = self.metricas.socios_vistos = 0
+        self.log("grabación parada:", a.parada)
 
     # ── Plataforma de transcripción ───────────────────────────────────────────────────────────────────────────────────
 
@@ -178,14 +222,26 @@ class Supervisor:
         envio = self.envios.get(rid)
         if envio and self.reloj() < envio.proximo_s:
             return
+        if envio and self.reloj() - envio.desde_s >= PLAZO_S:
+            self.envios.pop(rid, None)
+            self._error(rid, Estado.GRABADA, "plazo_envio")
+            return
         directorio = self.raiz / rid
         try:
-            pistas = pistas_de(sorted(p.name for p in directorio.iterdir()) if directorio.is_dir() else [], list(r["socios"]))
+            nombres = (
+                sorted(e.name for e in os.scandir(directorio)) if directorio.is_dir() and not directorio.is_symlink() else []
+            )
+            pistas = pistas_de(nombres, list(r["socios"]))
         except PistasNoValidas as e:
             self.log("pistas no válidas:", e)
             self._error(rid, Estado.GRABADA, "pistas")
             return
-        codigo, cuerpo = self.plataforma.crear(directorio, pistas, rid)
+        try:
+            codigo, cuerpo = self.plataforma.crear(directorio, pistas, rid)
+        except PistasNoValidas as e:  # enlaces, FIFOs o ficheros vacíos en el tmpfs: no se sube nada
+            self.log("pistas no válidas:", e)
+            self._error(rid, Estado.GRABADA, "pistas")
+            return
         d = interpretar_creacion(codigo, cuerpo)
         if d.accion == "reintentar":
             n = envio.intento + 1 if envio else 0
@@ -240,27 +296,46 @@ class Supervisor:
         self.log("reunión en error:", motivo)
 
     def _borrar(self, nombre: str, motivo: str) -> None:
+        """Borra una entrada del tmpfs sin seguir enlaces: un enlace se quita, no se recorre su destino."""
         d = self.raiz / nombre
-        if not d.exists():
+        try:
+            st = os.lstat(d)
+        except FileNotFoundError:
             return
-        ficheros = [p for p in d.rglob("*") if p.is_file()]
-        octetos = sum(p.stat().st_size for p in ficheros)
-        shutil.rmtree(d)
-        self.repo.anotar_purga(nombre if _es_reunion(nombre) else None, motivo, len(ficheros), octetos)
+        ficheros = octetos = 0
+        if stat.S_ISDIR(st.st_mode):
+            for raiz, dirs, archivos in os.walk(d, followlinks=False):
+                for a in archivos + [x for x in dirs if os.path.islink(os.path.join(raiz, x))]:
+                    ficheros += 1
+                    octetos += os.lstat(os.path.join(raiz, a)).st_size
+            shutil.rmtree(d)  # rmtree no sigue los enlaces de dentro (los quita)
+        else:
+            ficheros, octetos = 1, st.st_size
+            d.unlink()
+        self.repo.anotar_purga(nombre if _es_reunion(nombre) else None, motivo, ficheros, octetos)
 
     def purgar(self, mtime: Callable[[Path], float] | None = None) -> None:
-        """@a10: borra el audio de las reuniones transcritas, el de más de 7 días y el huérfano. Nunca el de la grabación
-        activa."""
+        """@a10: borra el audio de las reuniones transcritas, el de más de 7 días (contados desde la base) y lo que no es de
+        ninguna reunión. Nunca el de la grabación activa. Un elemento que falla no impide purgar los demás."""
         self.ultima_purga_s = self.reloj()
         if not self.raiz.is_dir():
             return
-        dirs = [d for d in self.raiz.iterdir() if d.is_dir() and not (self.activa and d.name == self.activa.rid)]
-        estados = self.repo.estados_de([d.name for d in dirs])
-        leer = mtime or (lambda p: p.stat().st_mtime)
-        audios = [Audio(d.name, estados.get(d.name), leer(d)) for d in dirs]
+        entradas = [e for e in os.scandir(self.raiz) if not (self.activa and e.name == self.activa.rid)]
+        estados = self.repo.estados_de([e.name for e in entradas])
+        leer = mtime or (lambda p: os.lstat(p).st_mtime)
+        audios = []
+        for e in entradas:
+            conocida = estados.get(e.name) if e.is_dir(follow_symlinks=False) else None
+            if conocida:
+                audios.append(Audio(e.name, conocida[0], conocida[1]))
+            else:
+                audios.append(Audio(e.name, None, leer(Path(e.path))))
         for nombre, motivo in a_borrar(audios, self.reloj()):
-            self._borrar(nombre, motivo)
-            self.log("audio borrado:", motivo)
+            try:
+                self._borrar(nombre, motivo)
+                self.log("audio borrado:", motivo)
+            except Exception as ex:  # noqa: BLE001
+                self.log("no se pudo borrar una entrada del tmpfs:", type(ex).__name__)
 
 
 def _es_reunion(nombre: str) -> bool:

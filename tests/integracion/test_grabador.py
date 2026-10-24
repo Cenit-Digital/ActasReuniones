@@ -62,7 +62,7 @@ def sala_falsa():
 
 
 def test_grabar_vistos_y_parada_ordenada(chromium, sala_falsa, tmp_path):
-    sala = Sala("salaprueba", "clave secreta", base=sala_falsa + "?publican=socioa,x7kq2lm&")
+    sala = Sala("salaprueba", "clave secreta", base=sala_falsa + "?publican=socioa,x7kq2lm&retardo=1500&")
     lineas: list[str] = []
     cdp = Cdp(chromium, Registro([sala.clave]))
     g = Grabacion(cdp, sala, ("socioa", "sociob"), tmp_path / "reunion", lambda *p: lineas.append(" ".join(map(str, p))))
@@ -77,6 +77,53 @@ def test_grabar_vistos_y_parada_ordenada(chromium, sala_falsa, tmp_path):
     targets = cdp.enviar("Target.getTargets")["targetInfos"]
     assert not [t for t in targets if t["url"].startswith(sala_falsa)]  # las páginas de la sala se cerraron
     cdp.cerrar()
+
+
+def test_parar_sin_ninguna_grabacion_no_es_un_exito(chromium, sala_falsa, tmp_path):
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?sinpar&")
+    cdp = Cdp(chromium, Registro())
+    g = Grabacion(cdp, sala, ("socioa",), tmp_path / "r", lambda *p: None)
+    g.empezar()
+    time.sleep(1)
+    assert g.parar() is False
+    cdp.cerrar()
+
+
+def test_si_falla_una_pagina_al_empezar_se_cierran_las_ya_abiertas(chromium, sala_falsa, tmp_path):
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?")
+    cdp = Cdp(chromium, Registro())
+    original, n = cdp.pagina, []
+
+    def pagina(*a, **k):
+        n.append(1)
+        if len(n) == 2:
+            raise RuntimeError("Target.createTarget: error de CDP")
+        return original(*a, **k)
+
+    cdp.pagina = pagina
+    g = Grabacion(cdp, sala, ("socioa", "sociob"), tmp_path / "r", lambda *p: None)
+    with pytest.raises(RuntimeError):
+        g.empezar()
+    targets = cdp.enviar("Target.getTargets")["targetInfos"]
+    assert not [t for t in targets if t["url"].startswith(sala_falsa)]
+    assert cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"}) == {}  # Chromium sigue usable
+    cdp.cerrar()
+
+
+def test_reanudar_y_parar_las_paginas_de_un_supervisor_anterior(chromium, sala_falsa, tmp_path):
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?retardo=500&")
+    cdp = Cdp(chromium, Registro())
+    primera = Grabacion(cdp, sala, ("socioa",), tmp_path / "r", lambda *p: None)
+    primera.empezar()  # y el supervisor «muere» sin parar
+    time.sleep(1)
+    cdp.cerrar()
+    cdp2 = Cdp(chromium, Registro())
+    rescate = Grabacion(cdp2, sala, ("socioa",), tmp_path / "r", lambda *p: None)
+    rescate.reanudar()
+    assert list(rescate.paginas) == ["socioa"]
+    assert rescate.parar() is True
+    assert [p.name.split("_")[0] for p in (tmp_path / "r").iterdir()] == ["socioa"]
+    cdp2.cerrar()
 
 
 def test_url_de_la_pagina_espectadora():

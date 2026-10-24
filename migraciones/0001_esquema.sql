@@ -51,3 +51,25 @@ CREATE TABLE purgas (
     bytes       bigint NOT NULL,
     creado_en   timestamptz NOT NULL DEFAULT now()
 );
+
+-- @a6 en la base: una reunión no existe sin la conformidad de cada uno de sus socios, con la misma versión del texto
+-- informativo. Diferido: la reunión y sus conformidades se insertan en la misma transacción (Repositorio.pedir).
+CREATE FUNCTION comprobar_conformidades() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM unnest(NEW.socios) AS s(socio)
+        WHERE NOT EXISTS (
+            SELECT 1 FROM conformidades c
+            WHERE c.reunion_id = NEW.id AND c.socio = s.socio AND c.texto_version = NEW.texto_version
+        )
+    ) THEN
+        RAISE EXCEPTION 'reunión sin la conformidad de cada socio' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END
+$$;
+CREATE CONSTRAINT TRIGGER reuniones_con_conformidades
+    AFTER INSERT OR UPDATE OF socios, texto_version ON reuniones
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION comprobar_conformidades();

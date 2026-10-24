@@ -10,8 +10,9 @@ from dataclasses import dataclass
 
 TOPE_PISTAS = 16  # MAX_PISTAS de la API interna de la plataforma (transcribir.entradas.api.app)
 
-_GRABACION = re.compile(r"^(?P<socio>[a-z0-9]+)_(?P<ms>\d+)\.webm$")
-_PARTIDA = re.compile(r"^[a-z0-9]+_\d+\.webm_\d+$")
+# fullmatch y ASCII: «$» aceptaría un salto de línea final y «\d», dígitos de otras escrituras (el nombre lo elige Chromium).
+_GRABACION = re.compile(r"(?P<socio>[a-z0-9]+)_(?P<ms>[0-9]+)\.webm", re.ASCII)
+_PARTIDA = re.compile(r"[a-z0-9]+_[0-9]+\.webm_[0-9]+", re.ASCII)
 _TEMPORAL = (".crdownload",)
 
 
@@ -33,9 +34,9 @@ def pistas_de(ficheros: list[str], conformes: list[str]) -> list[Pista]:
     for nombre in ficheros:
         if nombre.endswith(_TEMPORAL) or nombre.startswith(".") or nombre.endswith((".json", ".jsonl")):
             continue
-        if _PARTIDA.match(nombre):
+        if _PARTIDA.fullmatch(nombre):
             raise PistasNoValidas("grabación partida por VDO.Ninja: su marca no es la del trozo")
-        m = _GRABACION.match(nombre)
+        m = _GRABACION.fullmatch(nombre)
         if m is None:
             raise PistasNoValidas("fichero que no es una grabación")
         if m["socio"] not in conformes:

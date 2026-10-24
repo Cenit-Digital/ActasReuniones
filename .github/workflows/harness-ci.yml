@@ -105,6 +105,8 @@ jobs:
         with:
           persist-credentials: false
       - run: uv sync --locked
+      - name: requirements-ci.txt al día con uv.lock (lo usa el job grabador, con hashes)
+        run: uv export --frozen --no-emit-project --format requirements.txt --no-header -q | diff - requirements-ci.txt
       - name: Lint
         run: uv run --locked ruff check && uv run --locked ruff format --check && uv run --locked mypy
       - name: Tests (unitarios e integración con PostgreSQL; el grabador se salta aquí)
@@ -124,10 +126,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: uv (versión fijada) y dependencias
-        run: |
-          set -eu
-          python3 -m pip install --break-system-packages --quiet uv==0.13.5
-          UV_PYTHON_DOWNLOADS=never uv sync --locked
+      - name: Dependencias con sus hashes (requirements-ci.txt, exportado de uv.lock)
+        run: python3 -m pip install --break-system-packages --quiet --require-hashes --no-deps -r requirements-ci.txt
       - name: Test del grabador (CDP por WebSocket y descargas)
-        run: uv run --locked pytest -rs tests/integracion/test_grabador.py
+        env:
+          PYTHONPATH: src
+        run: python3 -m pytest -rs tests/integracion/test_grabador.py

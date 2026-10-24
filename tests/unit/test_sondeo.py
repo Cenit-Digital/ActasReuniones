@@ -48,7 +48,9 @@ def test_estado_desconocido_es_error():
     assert interpretar_estado(200, {"trabajo": {"estado": "raro"}}) == Decision("error", motivo="estado_desconocido")
 
 
-@pytest.mark.parametrize(("codigo", "motivo"), [(401, "token"), (404, "trabajo_no_encontrado")])
+@pytest.mark.parametrize(
+    ("codigo", "motivo"), [(401, "token"), (404, "trabajo_no_encontrado"), (403, "rechazada_403"), (422, "rechazada_422")]
+)
 def test_estado_rechazado(codigo, motivo):
     assert interpretar_estado(codigo, None) == Decision("error", motivo=motivo)
 
@@ -66,3 +68,12 @@ def test_espera_creciente_con_tope():
 def test_plazo_total_de_doce_horas():
     # Una reunión de 3 h con el nodo cargado: 3 pistas a ~1,5 s por segundo de voz, más la cola de la plataforma.
     assert PLAZO_S == 12 * 3600
+
+
+@pytest.mark.parametrize("cuerpo", [None, "texto", [], {"trabajo": "x"}, {"trabajo": None}])
+def test_estado_200_con_cuerpo_no_valido_es_error(cuerpo):
+    assert interpretar_estado(200, cuerpo) == Decision("error", motivo="respuesta_no_valida")
+
+
+def test_creacion_201_con_cuerpo_que_no_es_un_objeto():
+    assert interpretar_creacion(201, ["x"]) == Decision("error", motivo="respuesta_sin_id")

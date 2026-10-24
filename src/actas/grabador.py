@@ -102,15 +102,41 @@ class Grabacion:
     paginas: dict[str, tuple[str, str]] = field(default_factory=dict)
     descargas: dict[str, str] = field(default_factory=dict)
 
-    def empezar(self) -> None:
+    def _descargar_aqui(self) -> None:
         self.destino.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.cdp.manejadores.append(self._al_evento)
+        if self._al_evento not in self.cdp.manejadores:
+            self.cdp.manejadores.append(self._al_evento)
         self.cdp.enviar(
             "Browser.setDownloadBehavior", {"behavior": "allow", "downloadPath": str(self.destino), "eventsEnabled": True}
         )
-        for s in self.socios:
-            self.paginas[s] = self.cdp.pagina(self.sala.url(s), antes=(VISTOS_JS,), nombre=s)
-            self.registro("espectador de", s)
+
+    def empezar(self) -> None:
+        """Una página por socio. Si una falla, se cierran las ya abiertas: no pueden quedarse grabando sin supervisor."""
+        self._descargar_aqui()
+        try:
+            for s in self.socios:
+                self.paginas[s] = self.cdp.pagina(self.sala.url(s), antes=(VISTOS_JS,), nombre=s)
+                self.registro("espectador de", s)
+        except Exception:
+            self._cerrar()
+            raise
+
+    def reanudar(self) -> None:
+        """Tras reiniciarse el supervisor con Chromium vivo: toma las páginas de la sala que siguen grabando, para pararlas de
+        forma ordenada y no perder lo grabado. La etiqueta de cada página está en su URL (`&label=<id>`)."""
+        self._descargar_aqui()
+        for t in self.cdp.enviar("Target.getTargets")["targetInfos"]:
+            url = str(t.get("url", ""))
+            if t.get("type") != "page" or not url.startswith(self.sala.base):
+                continue
+            socio = (urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("label") or [""])[0]
+            if socio not in self.socios or socio in self.paginas:
+                self.cdp.cerrar_pagina(t["targetId"])
+                continue
+            ses = self.cdp.enviar("Target.attachToTarget", {"targetId": t["targetId"], "flatten": True})["sessionId"]
+            self.cdp.nombres[ses] = socio
+            self.paginas[socio] = (t["targetId"], ses)
+        self.registro("páginas retomadas:", len(self.paginas))
 
     def _al_evento(self, m: Evento) -> None:
         p: dict[str, Any] = m.get("params", {})
@@ -132,17 +158,33 @@ class Grabacion:
         return salida
 
     def parar(self) -> bool:
-        """Parada ordenada. True si todas las descargas terminaron (`completed`)."""
+        """Parada ordenada. True solo si hubo grabaciones y todas sus descargas terminaron (`completed`).
+
+        `recorder.stop()` es asíncrono: se espera a que empiecen tantas descargas como grabaciones se pararon (con el plazo de
+        ESPERA_DESCARGAS_S) y luego a que terminen. Sin ninguna descarga no es un éxito."""
+        antes = len(self.descargas)
+        paradas = 0
         for s, (_, ses) in self.paginas.items():
             try:
-                self.registro(s, "grabaciones paradas:", self.cdp.evaluar(ses, PARAR_JS, espera=5))
+                n = self.cdp.evaluar(ses, PARAR_JS, espera=5)
+                paradas += n if isinstance(n, int) else 0
+                self.registro(s, "grabaciones paradas:", n)
             except Exception as e:  # noqa: BLE001
                 self.registro("parar", s, type(e).__name__)
         limite = time.monotonic() + ESPERA_DESCARGAS_S
-        while time.monotonic() < limite and "empezada" in self.descargas.values():
-            time.sleep(1)
+        while time.monotonic() < limite and (len(self.descargas) < antes + paradas or "empezada" in self.descargas.values()):
+            time.sleep(0.5)
+        self._cerrar()
+        completas = len(self.descargas) >= antes + paradas
+        return bool(self.descargas) and completas and all(v == "completed" for v in self.descargas.values())
+
+    def _cerrar(self) -> None:
+        """Cierra las páginas y deja de aceptar descargas: fuera de una grabación, nada escribe en /grabaciones."""
         for t, _ in self.paginas.values():
             self.cdp.cerrar_pagina(t)
+        try:
+            self.cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"}, espera=10)
+        except Exception as e:  # noqa: BLE001
+            self.registro("no se pudieron denegar las descargas:", type(e).__name__)
         if self._al_evento in self.cdp.manejadores:
             self.cdp.manejadores.remove(self._al_evento)
-        return all(v == "completed" for v in self.descargas.values())

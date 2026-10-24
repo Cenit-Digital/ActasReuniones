@@ -2,6 +2,7 @@
 La subida va en flujo: el cuerpo multipart no se arma en memoria (una pista de 3 h pesa ~110 MB)."""
 
 import json
+import os
 import threading
 from email.parser import BytesParser
 from email.policy import HTTP
@@ -9,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from actas.pistas import Pista
+from actas.pistas import Pista, PistasNoValidas
 from actas.plataforma import Plataforma
 
 
@@ -107,3 +108,39 @@ def test_401_se_devuelve_tal_cual(servidor):
 
 def test_sin_servidor_codigo_cero():
     assert Plataforma("http://127.0.0.1:9", "t", tiempo_s=2).estado("1b4e28ba-2fa1-11d2-883f-0016d3cca427") == (0, None)
+
+
+def _una(tmp_path):
+    return [Pista("socioa_1000.webm", "socioa", 1000, 0)]
+
+
+def test_un_enlace_simbolico_no_se_sigue(servidor, tmp_path):
+    # Un Chromium comprometido escribe en el tmpfs un enlace con nombre de pista hacia un secreto del supervisor.
+    secreto = tmp_path / "token"
+    secreto.write_text("tok3n-secreto")
+    (tmp_path / "r").mkdir()
+    (tmp_path / "r" / "socioa_1000.webm").symlink_to(secreto)
+    Falso.recibido = {}
+    with pytest.raises(PistasNoValidas):
+        Plataforma(servidor, "t").crear(tmp_path / "r", _una(tmp_path), "r")
+    assert Falso.recibido == {}
+
+
+def test_un_fifo_no_bloquea(servidor, tmp_path):
+    os.mkfifo(tmp_path / "socioa_1000.webm")
+    with pytest.raises(PistasNoValidas):
+        Plataforma(servidor, "t").crear(tmp_path, _una(tmp_path), "r")
+
+
+def test_una_pista_vacia_no_se_envia(servidor, tmp_path):
+    (tmp_path / "socioa_1000.webm").write_bytes(b"")
+    with pytest.raises(PistasNoValidas):
+        Plataforma(servidor, "t").crear(tmp_path, _una(tmp_path), "r")
+
+
+def test_el_directorio_no_puede_ser_un_enlace(servidor, tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "socioa_1000.webm").write_bytes(b"opus")
+    (tmp_path / "r").symlink_to(tmp_path / "real")
+    with pytest.raises(PistasNoValidas):
+        Plataforma(servidor, "t").crear(tmp_path / "r", _una(tmp_path), "r")

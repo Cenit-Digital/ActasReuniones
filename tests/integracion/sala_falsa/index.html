@@ -3,21 +3,25 @@
 <title>Sala falsa</title>
 <script>
 // Imita lo que el grabador usa de VDO.Ninja v30.2: session.rpcs[...].videoElement.recorder.stop() descarga la grabación como
-// <label>_<ms>.webm, y session.desaltStreamID. Anuncia por WebSocket falso los streams de ?publican=a,b (lo lee VISTOS_JS).
+// <label>_<ms>.webm al cabo de un rato (MediaRecorder es asíncrono: ?retardo=ms), y session.desaltStreamID. Con ?sinpar no hay
+// ningún par (nadie publicó): no hay grabación que parar. Anuncia por WebSocket falso los streams de ?publican=a,b (lo lee VISTOS_JS).
 const q = new URLSearchParams(location.search);
 const etiqueta = q.get("label"), inicio = Date.now();
 window.session = {
   desaltStreamID: (s) => s,
   rpcs: {
     u1: {videoElement: {recorder: {stop() {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob(["opus de " + etiqueta], {type: "audio/webm"}));
-      a.download = `${etiqueta}_${inicio}.webm`;
-      document.body.appendChild(a);
-      a.click();
+      setTimeout(() => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob(["opus de " + etiqueta], {type: "audio/webm"}));
+        a.download = `${etiqueta}_${inicio}.webm`;
+        document.body.appendChild(a);
+        a.click();
+      }, Number(q.get("retardo") || 0));
     }}}},
   },
 };
+if (q.has("sinpar")) window.session.rpcs = {};
 window.addEventListener("load", () => {
   const ws = new WebSocket("ws://127.0.0.1:9/");  // nunca conecta; solo para disparar el evento como lo haría la sala
   const lista = (q.get("publican") || "").split(",").filter(Boolean).map((streamID) => ({streamID}));

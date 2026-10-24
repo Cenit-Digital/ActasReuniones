@@ -39,9 +39,14 @@ def interpretar_estado(codigo: int, cuerpo: Any) -> Decision:
         return Decision("error", motivo="token")
     if codigo == 404:
         return Decision("error", motivo="trabajo_no_encontrado")
+    if 400 <= codigo < 500:
+        return Decision("error", motivo=_rechazo(codigo))
     if codigo != 200:
         return Decision("seguir", motivo=f"http_{codigo}")
-    estado = (cuerpo.get("trabajo") or {}).get("estado")
+    trabajo = cuerpo.get("trabajo") if isinstance(cuerpo, dict) else None
+    if not isinstance(trabajo, dict):
+        return Decision("error", motivo="respuesta_no_valida")
+    estado = trabajo.get("estado")
     if estado == "listo":
         return Decision("listo") if isinstance(cuerpo.get("transcripcion"), dict) else Decision("error", motivo="listo_sin_texto")
     if estado in ("error", "cancelado"):

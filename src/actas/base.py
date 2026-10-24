@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import psycopg.conninfo
 from psycopg import sql
 from psycopg.rows import dict_row
 
@@ -35,10 +36,11 @@ def _esquema(nombre: str) -> sql.Identifier:
     return sql.Identifier(nombre)
 
 
-def migrar(dsn: str, esquema: str = "actas") -> list[str]:
-    """Aplica las migraciones pendientes, cada una en su transacción. Devuelve las aplicadas."""
+def migrar(dsn: str, esquema: str = "actas", password: str | None = None) -> list[str]:
+    """Aplica las migraciones pendientes, cada una en su transacción. Devuelve las aplicadas. La contraseña va como parámetro
+    aparte, nunca interpolada en el conninfo."""
     aplicadas = []
-    with psycopg.connect(dsn) as c:
+    with psycopg.connect(psycopg.conninfo.make_conninfo(dsn, password=password)) as c:
         c.execute(sql.SQL("SET search_path = {}").format(_esquema(esquema)))
         c.execute(
             "CREATE TABLE IF NOT EXISTS esquema_migraciones "
@@ -114,11 +116,17 @@ class Repositorio:
             ).fetchall()
         return [_fila(f) for f in filas]
 
-    def estados_de(self, ids: Sequence[str]) -> dict[str, str]:
+    def estados_de(self, ids: Sequence[str]) -> dict[str, tuple[str, float]]:
+        """(estado, momento de referencia en epoch) de cada reunión: el fin de la grabación o, si no lo hay, su creación. El
+        plazo del audio se cuenta desde aquí y no desde el mtime del directorio, que puede tocar Chromium."""
         validos = [i for i in ids if _es_uuid(i)]
         with self.conexion() as c:
-            filas = c.execute("SELECT id::text, estado FROM reuniones WHERE id = ANY(%s::uuid[])", (validos,)).fetchall()
-        return {f[0]: f[1] for f in filas}
+            filas = c.execute(
+                "SELECT id::text, estado, extract(epoch FROM coalesce(fin, creado_en))::float8 "
+                "FROM reuniones WHERE id = ANY(%s::uuid[])",
+                (validos,),
+            ).fetchall()
+        return {f[0]: (f[1], float(f[2])) for f in filas}
 
     def mover(
         self,
@@ -146,7 +154,7 @@ class Repositorio:
         trabajo_id: str | None = None,
     ) -> None:
         cur = c.execute(
-            """UPDATE reuniones SET estado = %s, actualizado_en = now(), motivo = %s,
+            """UPDATE reuniones SET estado = %s, actualizado_en = now(), motivo = COALESCE(%s, motivo),
                    inicio = CASE WHEN %s THEN now() ELSE inicio END,
                    fin = CASE WHEN %s THEN now() ELSE fin END,
                    trabajo_id = COALESCE(%s, trabajo_id)

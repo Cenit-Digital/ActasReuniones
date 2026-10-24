@@ -62,3 +62,14 @@ def test_tiempos_o_texto_no_validos(seg):
 def test_forma_inesperada():
     with pytest.raises(TranscripcionNoValida):
         segmentos_de({"segmentos": "no"}, ["socioa"])
+
+
+@pytest.mark.parametrize("seg", ["texto", None, 3])
+def test_segmento_que_no_es_un_objeto(seg):
+    with pytest.raises(TranscripcionNoValida):
+        segmentos_de({"hablantes": HABLANTES, "segmentos": [seg]}, ["socioa"])
+
+
+def test_tope_de_int4_incluido():
+    t = {"hablantes": HABLANTES, "segmentos": [{"hablante_id": "h1", "inicio_ms": 0, "fin_ms": 2**31 - 1, "texto": "x"}]}
+    assert segmentos_de(t, ["socioa"])[0]["fin_ms"] == 2**31 - 1

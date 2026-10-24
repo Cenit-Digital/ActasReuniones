@@ -21,6 +21,17 @@ def test_pedir_guarda_una_conformidad_por_socio_con_version(repo):
     assert repo.conformidades(rid) == [("sociopablo", "v1"), ("socioroberto", "v1")]
 
 
+def test_la_base_rechaza_una_reunion_sin_sus_conformidades(repo):
+    with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
+        c.execute("INSERT INTO reuniones (socios, texto_version) VALUES ('{socioa}', 'v1')")
+
+
+def test_la_base_rechaza_cambiar_la_version_sin_conformidades_nuevas(repo):
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
+        c.execute("UPDATE reuniones SET texto_version = 'v2' WHERE id = %s", (rid,))
+
+
 def test_la_base_rechaza_una_reunion_sin_socios(repo):
     with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
         c.execute("INSERT INTO reuniones (socios, texto_version) VALUES ('{}', 'v1')")
@@ -113,3 +124,9 @@ def test_traza_de_purga_sin_nombres(repo):
 def test_cuenta_por_estado(repo):
     repo.pedir(Peticion(("socioa",), "v1"))
     assert repo.cuenta_por_estado() == {"pedida": 1}
+
+
+def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
+    # Con espacios o comillas, interpolada en el conninfo rompería el análisis (y permitiría inyectar parámetros de libpq).
+    url, esquema = dsn
+    assert base.migrar(url, esquema, password="con espacio' y comilla") == ["0001_esquema.sql"]

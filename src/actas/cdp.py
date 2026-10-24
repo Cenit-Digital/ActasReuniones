@@ -7,6 +7,8 @@ de la URL de cada página (Page.navigate): es la única forma de entrar en la sa
 
 import json
 import threading
+import time
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any
@@ -23,15 +25,51 @@ class ChromiumNoDisponible(RuntimeError):
     pass
 
 
+MAX_MENSAJE = 8 << 20  # las respuestas de CDP que se usan son pequeñas; el contenedor tiene 256Mi
+
+
+def _version(base: str) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(f"{base}/json/version", timeout=5) as r:  # noqa: S310 (solo http://127.0.0.1)
+            datos = json.loads(r.read(MAX_MENSAJE))
+    except (OSError, ValueError) as e:
+        raise ChromiumNoDisponible(type(e).__name__) from e
+    if not isinstance(datos, dict):
+        raise ChromiumNoDisponible("respuesta de /json/version no válida")
+    return datos
+
+
+def esperar_chromium(base: str, plazo_s: float = 300, intervalo_s: float = 5) -> None:
+    """Al arrancar el pod, Chromium puede tardar: hasta que responde no se puede rescatar ni cerrar ninguna página."""
+    limite = time.monotonic() + plazo_s
+    while True:
+        try:
+            _version(base)
+            return
+        except ChromiumNoDisponible:
+            if time.monotonic() >= limite:
+                raise
+            time.sleep(intervalo_s)
+
+
 class Cdp:
     def __init__(self, base: str, registro: Registro) -> None:
-        try:
-            with urllib.request.urlopen(f"{base}/json/version", timeout=5) as r:  # noqa: S310 (solo http://127.0.0.1)
-                ws = json.load(r)["webSocketDebuggerUrl"]
-        except (OSError, ValueError, KeyError) as e:
-            raise ChromiumNoDisponible(type(e).__name__) from e
+        ws = _version(base).get("webSocketDebuggerUrl")
+        # Solo el WebSocket del mismo Chromium (mismo host y puerto que `base`, ruta del navegador): nunca otro destino.
+        esperado = urllib.parse.urlsplit(base)
+        if not isinstance(ws, str):
+            raise ChromiumNoDisponible("WebSocket de CDP inesperado")
+        partes = urllib.parse.urlsplit(ws)
+        if (
+            partes.scheme != "ws"
+            or (partes.hostname, partes.port) != (esperado.hostname, esperado.port)
+            or not partes.path.startswith("/devtools/browser/")
+        ):
+            raise ChromiumNoDisponible("WebSocket de CDP inesperado")
         self._log = registro
-        self._ws: ClientConnection = connect(ws, max_size=64 << 20, open_timeout=10)
+        # Se entra en el gestor de contexto a mano: la conexión vive lo que dura la grabación y se cierra en cerrar().
+        self._conexion = connect(ws, max_size=MAX_MENSAJE, open_timeout=10)
+        self._ws: ClientConnection = self._conexion.__enter__()
         self._id = 0
         self._esperas: dict[int, tuple[threading.Event, list[Evento]]] = {}
         self._cerrojo = threading.Lock()
@@ -133,4 +171,4 @@ class Cdp:
             self._log("no se pudo cerrar una página:", type(e).__name__)
 
     def cerrar(self) -> None:
-        self._ws.close()
+        self._conexion.__exit__(None, None, None)
