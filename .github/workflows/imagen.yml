@@ -78,19 +78,22 @@ jobs:
           grep -qx "el panel no pudo arrancar: KeyError" /tmp/panel.err
           d="$(mktemp -d)"
           echo '[{"id": "pablo", "nombre": "Pablo"}]' > "$d/socios.json"
-          chmod 755 "$d"; chmod 644 "$d/socios.json"
+          echo 'secreto-de-humo' > "$d/proxy"
+          chmod 755 "$d"; chmod 644 "$d/socios.json" "$d/proxy"
           # El DSN no se usa hasta la primera consulta: /salud no toca la base.
           docker run -d --name panel --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
-            -v "$d:/config:ro" -e ACTAS_SOCIOS_FICHERO=/config/socios.json -e ACTAS_DSN=postgresql:///actas \
+            -v "$d:/config:ro" -e ACTAS_SOCIOS_FICHERO=/config/socios.json -e ACTAS_SECRETO_PROXY_FICHERO=/config/proxy \
+            -e ACTAS_DSN=postgresql:///actas \
             -p 127.0.0.1:18080:8080 "$PRUEBA" actas.panel
           for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:18080/salud && break; sleep 1; done
           curl -fsS -D /tmp/salud.h http://127.0.0.1:18080/salud | grep -qx ok
           if grep -qi '^server:' /tmp/salud.h; then echo "::error::cabecera Server"; exit 1; fi
           grep -qi "^content-security-policy: default-src 'none'" /tmp/salud.h
-          # Sin la cabecera de usuario de Traefik, 401.
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/)" = 401
+          # Sin el secreto de la ruta de Traefik, o sin su cabecera de usuario, 401.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Actas-Usuario: humo' http://127.0.0.1:18080/)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Actas-Proxy: secreto-de-humo' http://127.0.0.1:18080/)" = 401
           # @a32: sin registro de accesos y el error (aquí, sin base) solo por su tipo: la consulta no sale en el registro.
-          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Actas-Usuario: humo' \
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Actas-Usuario: humo' -H 'X-Actas-Proxy: secreto-de-humo' \
             'http://127.0.0.1:18080/buscar?q=marcaunicahumo')" = 500
           docker logs panel > /tmp/panel.log 2>&1
           grep -q "petición fallida: OperationalError" /tmp/panel.log

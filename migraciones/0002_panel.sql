@@ -3,7 +3,25 @@
 -- 1. Quién pulsó «Grabar»: el usuario de BasicAuth que Traefik pone en X-Actas-Usuario (headerField). NULL para actas.sh.
 ALTER TABLE reuniones ADD COLUMN pedido_por text CHECK (pedido_por ~ '^[A-Za-z0-9._@-]{1,64}$');
 
--- 2. Mínimo privilegio del rol del panel (@a33). El rol lo crea KubernetesInfrastructure (Job inquilinos) ANTES de desplegar
+-- 2. Las conformidades se escriben con su reunión, en la misma transacción (Repositorio.pedir): nadie, ni un panel comprometido,
+-- añade después conformidades a una reunión pasada (revisión de seguridad de #287, B1). now() es el inicio de la transacción, el
+-- mismo valor que el DEFAULT de reuniones.creado_en; el rol del panel no puede escribir creado_en.
+CREATE FUNCTION conformidad_con_su_reunion() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM reuniones r WHERE r.id = NEW.reunion_id AND r.estado = 'pedida' AND r.creado_en = now()
+    ) THEN
+        RAISE EXCEPTION 'conformidad fuera de la petición de su reunión' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER conformidades_con_su_reunion
+    BEFORE INSERT ON conformidades
+    FOR EACH ROW EXECUTE FUNCTION conformidad_con_su_reunion();
+
+-- 3. Mínimo privilegio del rol del panel (@a33). El rol lo crea KubernetesInfrastructure (Job inquilinos) ANTES de desplegar
 -- la imagen con esta migración: si no existe, la migración falla y el supervisor no arranca. Los privilegios por defecto del
 -- inquilino solo van a actas_app, así que aquí se dan uno a uno. Doc de GRANT (PostgreSQL 18): un privilegio de tabla se suma
 -- al de columna, de modo que primero se quita todo lo de tabla (REVOKE de tabla quita también los de columna) y la escritura se

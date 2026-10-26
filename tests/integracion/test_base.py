@@ -146,3 +146,10 @@ def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
             c.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(esquema)))
             c.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(esquema)))
             c.execute(sql.SQL("DROP OWNED BY {}; DROP ROLE {}").format(sql.Identifier(rol), sql.Identifier(rol)))
+
+
+def test_una_transaccion_rechazada_al_confirmar_cierra_la_conexion(repo):
+    # El trigger diferido falla en el COMMIT, al salir del `with`: la conexión no debe quedar abierta (ResourceWarning).
+    with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
+        c.execute("INSERT INTO reuniones (socios, texto_version) VALUES ('{socioa}', 'v1')")
+    assert c.closed

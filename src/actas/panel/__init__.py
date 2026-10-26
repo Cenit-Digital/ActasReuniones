@@ -4,20 +4,23 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
 - Escribe solo con `Repositorio.pedir` y `Repositorio.pedir_parada`, las mismas funciones que `actas.sh`: @a6 y el trigger
   diferido de conformidades aplican igual por las dos vías. El rol `actas_panel` no puede hacer nada más (migración 0002).
 - Quién pulsa: la cabecera `X-Actas-Usuario`, que pone el Middleware `basicauth` de Traefik (`headerField`, con `removeHeader`
-  para que la contraseña no llegue aquí). Su NetworkPolicy solo deja entrar a Traefik. Sin ella, 401 y nada se escribe.
-- CSRF: `origen.permitido` antes de leer el formulario de cualquier POST.
+  para que la contraseña no llegue aquí). Solo se cree si además llega `X-Actas-Proxy` con el secreto que añade otro middleware
+  de la misma ruta (el patrón de la consola): la NetworkPolicy no es la única barrera. Sin las dos, 401 y nada se escribe.
+- CSRF: `origen.permitido` antes de leer el formulario de cualquier POST; y `origen.lectura_permitida` para todo (XS-Search).
 - Sin JavaScript y con CSP estricta; sin registro de accesos ni texto de las peticiones en el registro (@a32).
 
 Plantillas: Starlette 1.7.0, docs/templates.md: «When using the `directory` argument, Starlette enables autoescape by default
 for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`». El único `Markup` es el de `busqueda.resaltar`.
 """
 
+import functools
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+import anyio
+import anyio.to_thread
 from starlette.applications import Starlette
-from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -30,17 +33,22 @@ from actas import busqueda, presentacion
 from actas.base import Repositorio, es_uuid
 from actas.conformidad import ConformidadNoValida
 from actas.formulario import usuario, validar_grabar, version_de_fichero
-from actas.origen import permitido
+from actas.origen import del_proxy, lectura_permitida, permitido
 from actas.registro import Registro
 
 AQUI = Path(__file__).resolve().parent
 TEXTOS = AQUI.parent / "textos"
 CABECERA_USUARIO = "x-actas-usuario"
+CABECERA_PROXY = "x-actas-proxy"
 CABECERAS = {
-    "content-security-policy": "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'",
+    "content-security-policy": (
+        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+    ),
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "cache-control": "no-store",
+    "cross-origin-resource-policy": "same-origin",
+    "cross-origin-opener-policy": "same-origin",
 }
 TOPE_CUERPO = 16 * 1024
 TOPE_CAMPOS = 32
@@ -69,8 +77,8 @@ class _Guardia:
     debug=False) y lo vuelve a lanzar «to allow servers to log the error»: aquí se registra solo su tipo y no sigue hasta
     uvicorn, que lo escribiría con su traza. El 500 propio solo sale si el error es anterior a la respuesta de Starlette."""
 
-    def __init__(self, app: ASGIApp, origen: str, registro: Registro) -> None:
-        self.app, self.origen, self.registro = app, origen, registro
+    def __init__(self, app: ASGIApp, origen: str, secreto: str, registro: Registro) -> None:
+        self.app, self.origen, self.secreto, self.registro = app, origen, secreto, registro
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -101,8 +109,12 @@ class _Guardia:
     def _rechazo(self, peticion: Request) -> Response | None:
         if peticion.url.path in RUTAS_SIN_USUARIO:
             return None
+        if not del_proxy(peticion.headers.get(CABECERA_PROXY), self.secreto):
+            return PlainTextResponse("Solo por la ruta de Traefik", status_code=401)
         if usuario(peticion.headers.get(CABECERA_USUARIO)) is None:
             return PlainTextResponse("Falta el usuario de BasicAuth", status_code=401)
+        if not lectura_permitida(peticion.headers):
+            return PlainTextResponse("Petición de otro origen", status_code=403)
         if peticion.method == "POST":
             if not permitido(peticion.headers, self.origen):
                 return PlainTextResponse("Petición de otro origen", status_code=403)
@@ -150,9 +162,15 @@ def crear_app(
     textos: Mapping[str, str],
     vigente: str,
     origen: str,
+    secreto: str,
     registro: Registro,
+    conexiones: int = 4,
 ) -> ASGIApp:
-    """`vigente`: la versión del texto informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente)."""
+    """`vigente`: la versión del texto informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente).
+    `secreto`: el que añade la ruta de Traefik en X-Actas-Proxy. `conexiones`: consultas a la base a la vez (una conexión cada
+    una), por debajo del CONNECTION LIMIT de actas_panel; el tope de uvicorn cuenta conexiones HTTP, no consultas."""
+    if not secreto:
+        raise ValueError("falta el secreto de la ruta de Traefik")
     plantillas = Jinja2Templates(directory=AQUI / "plantillas")
     estilo = (AQUI / "estatico" / "estilo.css").read_bytes()
     texto = presentacion.bloques(textos[vigente])
@@ -160,8 +178,12 @@ def crear_app(
     def pagina(peticion: Request, nombre: str, contexto: dict[str, Any], estado: int = 200) -> Response:
         return plantillas.TemplateResponse(peticion, nombre, contexto, status_code=estado)
 
+    limitador: list[anyio.CapacityLimiter] = []  # se crea dentro del bucle de eventos, en la primera consulta
+
     async def en_hilo(f: Callable[..., Any], *args: Any) -> Any:
-        return await run_in_threadpool(f, *args)
+        if not limitador:
+            limitador.append(anyio.CapacityLimiter(conexiones))
+        return await anyio.to_thread.run_sync(functools.partial(f, *args), limiter=limitador[0])
 
     async def salud(_: Request) -> Response:
         return PlainTextResponse("ok")
@@ -255,4 +277,4 @@ def crear_app(
         Route("/grabar", grabar, methods=["POST"]),
         Route("/parar", parar, methods=["POST"]),
     ]
-    return _Guardia(Starlette(debug=False, routes=rutas), origen, registro)
+    return _Guardia(Starlette(debug=False, routes=rutas), origen, secreto, registro)

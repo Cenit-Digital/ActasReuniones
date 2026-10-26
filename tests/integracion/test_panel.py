@@ -13,13 +13,15 @@ ORIGEN = "https://actas.cenitdigital.es"
 SOCIOS = {"pablo": "Pablo", "roberto": "Roberto", "andres": "Andrés"}
 VERSION = "2026-10-26"
 TEXTOS = {VERSION: "# Información\n\nTexto <b>informativo</b> de prueba."}
-USUARIO = {"x-actas-usuario": "panel"}
+SECRETO = "secreto-del-proxy"
+PROXY = {"x-actas-proxy": SECRETO}
+USUARIO = {**PROXY, "x-actas-usuario": "panel"}
 MISMO_ORIGEN = {**USUARIO, "sec-fetch-site": "same-origin", "origin": ORIGEN}
 
 
 @pytest.fixture
 def cliente(repo_panel):
-    app = crear_app(repo_panel, SOCIOS, TEXTOS, VERSION, ORIGEN, Registro())
+    app = crear_app(repo_panel, SOCIOS, TEXTOS, VERSION, ORIGEN, SECRETO, Registro())
     with TestClient(app, base_url=ORIGEN, follow_redirects=False) as c:
         yield c
 
@@ -48,23 +50,51 @@ def _transcrita(repo, segmentos, socios=("sociopruebaa",)):
 
 @pytest.mark.parametrize("ruta", ["/", "/grabar", "/buscar?q=hola", "/estilo.css"])
 def test_sin_usuario_401(cliente, ruta):
-    assert cliente.get(ruta).status_code == 401
+    assert cliente.get(ruta, headers=PROXY).status_code == 401
 
 
 @pytest.mark.parametrize("valor", ["", "pa blo", "x" * 65])
 def test_usuario_mal_formado_401(cliente, valor):
-    assert cliente.get("/", headers={"x-actas-usuario": valor}).status_code == 401
+    assert cliente.get("/", headers={**PROXY, "x-actas-usuario": valor}).status_code == 401
+
+
+@pytest.mark.parametrize("proxy", [{}, {"x-actas-proxy": "otro"}, {"x-actas-proxy": ""}])
+def test_sin_el_secreto_de_traefik_401_aunque_traiga_usuario(cliente, repo, proxy):
+    """M1: un camino al pod que no sea la ruta de Traefik no puede hacerse pasar por un usuario."""
+    assert cliente.get("/", headers={"x-actas-usuario": "panel", **proxy}).status_code == 401
+    r = cliente.post(
+        "/grabar",
+        data={"socio": ["pablo"], "version": VERSION},
+        headers={"x-actas-usuario": "panel", "sec-fetch-site": "same-origin", **proxy},
+    )
+    assert r.status_code == 401
+    assert _cuenta(repo) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("cabeceras", "estado"),
+    [
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "empty"}, 403),
+        ({"sec-fetch-site": "same-site", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty"}, 403),
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "iframe"}, 403),
+        ({"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document"}, 200),
+        ({"sec-fetch-site": "none", "sec-fetch-mode": "navigate", "sec-fetch-dest": "document"}, 200),
+    ],
+)
+def test_busqueda_aislada_de_otras_webs(cliente, cabeceras, estado):
+    """M2: XS-Search. Una web ajena no puede pedir /buscar en segundo plano; un enlace sí abre la página."""
+    assert cliente.get("/buscar", params={"q": "hola"}, headers={**USUARIO, **cabeceras}).status_code == estado
 
 
 def test_grabar_sin_usuario_401_y_nada_escrito(cliente, repo):
-    r = cliente.post("/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={"sec-fetch-site": "same-origin"})
+    r = cliente.post("/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**PROXY, "sec-fetch-site": "same-origin"})
     assert r.status_code == 401
     assert _cuenta(repo) == (0, 0)
 
 
 def test_parar_sin_usuario_401_y_nada_escrito(cliente, repo):
     rid = _grabando(repo)
-    assert cliente.post("/parar", headers={"sec-fetch-site": "same-origin"}).status_code == 401
+    assert cliente.post("/parar", headers={**PROXY, "sec-fetch-site": "same-origin"}).status_code == 401
     assert repo.reunion(rid)["parar_pedido_en"] is None
 
 
@@ -75,11 +105,13 @@ def test_parar_sin_usuario_401_y_nada_escrito(cliente, repo):
 def test_csp_estricta_en_todas_las_respuestas(cliente, ruta, cabeceras):
     r = cliente.get(ruta, headers=cabeceras)
     assert r.headers["content-security-policy"] == (
-        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'"
+        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["referrer-policy"] == "no-referrer"
     assert r.headers["cache-control"] == "no-store"
+    assert r.headers["cross-origin-resource-policy"] == "same-origin"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
     assert "server" not in r.headers
 
 

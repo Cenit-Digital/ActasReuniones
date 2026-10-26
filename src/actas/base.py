@@ -7,7 +7,7 @@ Los errores de la base se registran solo por su tipo: un INSERT de un segmento l
 
 import re
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -59,22 +59,26 @@ def migrar(dsn: str, esquema: str = "actas", password: str | None = None) -> lis
 
 
 class Repositorio:
-    def __init__(self, dsn: str, esquema: str = "actas", zona: str | None = None) -> None:
-        """`zona`: la zona horaria de la sesión (TimeZone), en la que llegan las fechas; el panel pide Europe/Madrid."""
+    def __init__(self, dsn: str, esquema: str = "actas", ajustes: Mapping[str, str] | None = None) -> None:
+        """`ajustes`: parámetros de la sesión (set_config) en cada conexión; el panel pide TimeZone y statement_timeout."""
         self._dsn = dsn
         self._esquema = _esquema(esquema)
-        self._zona = zona
+        self._ajustes = dict(ajustes or {})
 
     def cerrar(self) -> None:
         """Sin pool: una conexión por operación (como mucho unas pocas por minuto)."""
 
     @contextmanager
     def conexion(self) -> Iterator[psycopg.Connection[Any]]:
-        with psycopg.connect(self._dsn) as c:
-            c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
-            if self._zona:
-                c.execute("SELECT set_config('TimeZone', %s, false)", (self._zona,))
-            yield c
+        c = psycopg.connect(self._dsn)
+        try:
+            with c:  # confirma al salir; si el COMMIT falla (trigger diferido), la conexión se cierra igual en el finally
+                c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
+                for nombre, valor in self._ajustes.items():
+                    c.execute("SELECT set_config(%s, %s, false)", (nombre, valor))
+                yield c
+        finally:
+            c.close()
 
     def pedir(self, peticion: Peticion, pedido_por: str | None = None) -> str:
         """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2)."""

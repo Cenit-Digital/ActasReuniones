@@ -197,8 +197,25 @@ def test_hay_grabacion_activa_aunque_no_este_entre_las_ultimas(repo):
 def test_fechas_en_la_zona_del_panel(dsn, repo):
     url, esquema = dsn
     repo.pedir(Peticion(("pablo",), "v1"))
-    madrid = base.Repositorio(url, esquema, zona="Europe/Madrid").ultimas(1)[0]["creado_en"]
-    utc = base.Repositorio(url, esquema, zona="UTC").ultimas(1)[0]["creado_en"]
+    madrid = base.Repositorio(url, esquema, ajustes={"TimeZone": "Europe/Madrid"}).ultimas(1)[0]["creado_en"]
+    utc = base.Repositorio(url, esquema, ajustes={"TimeZone": "UTC"}).ultimas(1)[0]["creado_en"]
     assert madrid == utc
     assert madrid.utcoffset() in {timedelta(hours=1), timedelta(hours=2)}
     assert utc.utcoffset() == timedelta(0)
+
+
+def test_tope_de_tiempo_por_consulta(dsn, repo):
+    url, esquema = dsn
+    lento = base.Repositorio(url, esquema, ajustes={"statement_timeout": "50ms"})
+    with pytest.raises(psycopg.errors.QueryCanceled), lento.conexion() as c:
+        c.execute("SELECT pg_sleep(1)")
+
+
+@pytest.mark.parametrize("quien", ["repo", "repo_panel"])
+def test_ninguna_conformidad_nueva_para_una_reunion_ya_pedida(request, repo, quien):
+    """B1 de la revisión de seguridad: las conformidades se escriben con su reunión, en la misma transacción (Repositorio.pedir);
+    nadie, ni un panel comprometido, puede añadir después conformidades a una reunión pasada."""
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    with pytest.raises(psycopg.errors.CheckViolation), request.getfixturevalue(quien).conexion() as c:
+        c.execute("INSERT INTO conformidades (reunion_id, socio, texto_version) VALUES (%s, 'roberto', 'v1')", (rid,))
+    assert repo.conformidades(rid) == [("pablo", "v1")]
