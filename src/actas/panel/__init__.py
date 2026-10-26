@@ -10,7 +10,9 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
 - Sin JavaScript y con CSP estricta; sin registro de accesos ni texto de las peticiones en el registro (@a32).
 
 Plantillas: Starlette 1.7.0, docs/templates.md: «When using the `directory` argument, Starlette enables autoescape by default
-for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`». El único `Markup` es el de `busqueda.resaltar`.
+for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`»; Jinja2 3.1.6, docs/api.rst: es «a recommended
+setup that enables autoescaping for templates ending in '.html', '.htm' and '.xml'». El único `Markup` (MarkupSafe 3.0.4) es
+el de `busqueda.resaltar`.
 """
 
 import functools
@@ -98,8 +100,6 @@ class _Guardia:
         try:
             peticion = Request(scope)
             rechazo = self._rechazo(peticion)
-            if rechazo is None and peticion.method == "POST":
-                receive, rechazo = await _cuerpo_con_tope(receive)
             await (rechazo or self.app)(scope, receive, enviar)
         except Exception as e:  # noqa: BLE001 — sin traza ni mensaje: solo el tipo
             self.registro("petición fallida:", type(e).__name__)
@@ -118,42 +118,7 @@ class _Guardia:
         if peticion.method == "POST":
             if not permitido(peticion.headers, self.origen):
                 return PlainTextResponse("Petición de otro origen", status_code=403)
-            longitud = peticion.headers.get("content-length", "")
-            if longitud.isdigit() and int(longitud) > TOPE_CUERPO:
-                return _demasiado_grande()
         return None
-
-
-def _demasiado_grande() -> Response:
-    return PlainTextResponse("Formulario demasiado grande", status_code=413)
-
-
-async def _cuerpo_con_tope(receive: Receive) -> tuple[Receive, Response | None]:
-    """Lee el cuerpo entero, como mucho TOPE_CUERPO bytes, y lo vuelve a entregar a la aplicación. Cuenta los bytes en vez de
-    fiarse de Content-Length: Traefik reenvía por trozos cuando no conoce la longitud."""
-    trozos: list[bytes] = []
-    total = 0
-    while True:
-        mensaje = await receive()
-        if mensaje["type"] != "http.request":
-            return receive, PlainTextResponse("Petición interrumpida", status_code=400)
-        trozo = mensaje.get("body", b"")
-        total += len(trozo)
-        if total > TOPE_CUERPO:
-            return receive, _demasiado_grande()
-        trozos.append(trozo)
-        if not mensaje.get("more_body", False):
-            break
-    entregado = False
-
-    async def repetir() -> Message:
-        nonlocal entregado
-        if entregado:
-            return await receive()
-        entregado = True
-        return {"type": "http.request", "body": b"".join(trozos), "more_body": False}
-
-    return repetir, None
 
 
 def crear_app(
@@ -230,7 +195,7 @@ def crear_app(
         q = busqueda.normalizar(crudo)
         hallados = []
         if q is not None:
-            filas = await en_hilo(repo.buscar, q, busqueda.LIMITE, busqueda.INICIO + busqueda.FIN, busqueda.OPCIONES)
+            filas = await en_hilo(repo.buscar, q, busqueda.LIMITE, busqueda.QUITAR, busqueda.PONER, busqueda.OPCIONES)
             hallados = [
                 {
                     "id": h["reunion_id"],
@@ -251,6 +216,8 @@ def crear_app(
         return await formulario_grabar(peticion)
 
     async def grabar(peticion: Request) -> Response:
+        # Starlette 1.7.0, docs/requests.md: «You can configure the maximum number of fields or files with `max_files` and
+        # `max_fields`», «for security reasons» (lo analiza python-multipart 0.0.32, el analizador que exige `request.form`).
         form = await peticion.form(max_files=0, max_fields=TOPE_CAMPOS, max_part_size=TOPE_CUERPO)
         marcados = [s for s in form.getlist("socio") if isinstance(s, str)]
         version = form.get("version")
@@ -277,4 +244,6 @@ def crear_app(
         Route("/grabar", grabar, methods=["POST"]),
         Route("/parar", parar, methods=["POST"]),
     ]
-    return _Guardia(Starlette(debug=False, routes=rutas), origen, secreto, registro)
+    # Starlette 1.7.0, docs/requests.md: «To limit the complete request body [...] configure `max_body_size` on the
+    # application» (RequestBodyLimitMiddleware: 413, cuente Content-Length o los trozos que lleguen).
+    return _Guardia(Starlette(debug=False, routes=rutas, max_body_size=TOPE_CUERPO), origen, secreto, registro)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 TOPE_SOCIOS = 16
 # Alfanuméricos en minúscula: VDO.Ninja convierte «-» en «_» y el ID acaba en nombres de fichero (anexo de F0).
-_STREAM_ID = re.compile(r"[a-z0-9]{1,32}")
+STREAM_ID = re.compile(r"[a-z0-9]{1,32}")
 _VERSION = re.compile(r"[A-Za-z0-9._-]{1,40}")
 
 
@@ -23,7 +23,7 @@ def validar(socios: list[str], version: str) -> Peticion:
     if not socios:
         raise ConformidadNoValida("ningún socio conforme: no se graba")
     for s in socios:
-        if not _STREAM_ID.fullmatch(s):
+        if not STREAM_ID.fullmatch(s):
             raise ConformidadNoValida("streamID no válido: alfanumérico en minúscula, como mucho 32 caracteres")
     unicos = tuple(sorted(set(socios)))
     if len(unicos) > TOPE_SOCIOS:

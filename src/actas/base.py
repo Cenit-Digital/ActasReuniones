@@ -232,9 +232,10 @@ class Repositorio:
             ).fetchall()
         return _fila(fila), [(f[0], f[1]) for f in conformidades], [(f[0], f[1], f[2], f[3]) for f in segmentos]
 
-    def buscar(self, q: str, limite: int, centinelas: str, opciones: str) -> list[dict[str, Any]]:
+    def buscar(self, q: str, limite: int, quitar: str, poner: str, opciones: str) -> list[dict[str, Any]]:
         """@a22: los segmentos que casan con `websearch_to_tsquery('spanish', q)` (índice GIN de `tsv`), como mucho `limite`, y
-        su resaltado. `ts_headline` va fuera del LIMIT («can be slow») y sobre el texto sin los centinelas de `opciones`."""
+        su resaltado. `ts_headline` va fuera del LIMIT («can be slow») y sobre `translate(texto, quitar, poner)`: sin centinelas
+        propios y con `<`, `>` y `&` ocultos (busqueda.QUITAR y busqueda.PONER)."""
         with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
             filas = cur.execute(
                 """WITH q AS (SELECT websearch_to_tsquery('spanish', %(q)s) AS q),
@@ -245,10 +246,10 @@ class Repositorio:
                             ORDER BY r.creado_en DESC, s.reunion_id, s.inicio_ms, s.id
                             LIMIT %(limite)s)
                    SELECT h.reunion_id, h.creado_en, h.hablante, h.inicio_ms,
-                          ts_headline('spanish', translate(h.texto, %(centinelas)s, ''), q.q, %(opciones)s) AS fragmento
+                          ts_headline('spanish', translate(h.texto, %(quitar)s, %(poner)s), q.q, %(opciones)s) AS fragmento
                    FROM hallados h, q
                    ORDER BY h.creado_en DESC, h.reunion_id, h.inicio_ms""",
-                {"q": q, "limite": limite, "centinelas": centinelas, "opciones": opciones},
+                {"q": q, "limite": limite, "quitar": quitar, "poner": poner, "opciones": opciones},
             ).fetchall()
         return [_fila(f) for f in filas]
 

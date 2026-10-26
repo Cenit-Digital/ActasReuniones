@@ -4,7 +4,19 @@
 import pytest
 from markupsafe import Markup
 
-from actas.busqueda import FIN, INICIO, LIMITE, OPCIONES, TOPE_CONSULTA, normalizar, resaltar, sin_centinelas
+from actas.busqueda import (
+    FIN,
+    INICIO,
+    LIMITE,
+    OPCIONES,
+    PONER,
+    QUITAR,
+    SUSTITUTOS,
+    TOPE_CONSULTA,
+    normalizar,
+    resaltar,
+    sin_centinelas,
+)
 
 
 @pytest.mark.parametrize(
@@ -74,3 +86,30 @@ def test_los_centinelas_no_los_toca_el_escape_html():
 
 def test_opciones_de_ts_headline_con_los_centinelas():
     assert f"StartSel={INICIO}" in OPCIONES and f"StopSel={FIN}" in OPCIONES
+
+
+def test_resaltar_devuelve_escapados_los_sustitutos_de_las_etiquetas():
+    lt, gt, amp = SUSTITUTOS["<"], SUSTITUTOS[">"], SUSTITUTOS["&"]
+    r = resaltar(f"{INICIO}a{FIN} {lt}script{gt} {amp} <b>")
+    assert str(r) == "<mark>a</mark> &lt;script&gt; &amp; &lt;b&gt;"
+
+
+def test_translate_de_postgresql():
+    """translate(texto, QUITAR, PONER): cada carácter de QUITAR pasa al de su posición en PONER, y los que sobran se borran."""
+    assert QUITAR[: len(PONER)] == "<>&"
+    assert PONER == SUSTITUTOS["<"] + SUSTITUTOS[">"] + SUSTITUTOS["&"]
+    assert set(QUITAR[len(PONER) :]) == {INICIO, FIN, *SUSTITUTOS.values()}
+    assert len(set(QUITAR)) == len(QUITAR)
+
+
+def test_los_sustitutos_no_son_centinelas_ni_los_toca_el_escape():
+    from html import escape
+
+    todos = "".join(SUSTITUTOS.values())
+    assert escape(todos) == todos
+    assert INICIO not in todos and FIN not in todos
+    assert len(set(todos)) == 3
+
+
+def test_sin_centinelas_quita_tambien_los_sustitutos():
+    assert sin_centinelas("a" + "".join(SUSTITUTOS.values()) + "b") == "ab"

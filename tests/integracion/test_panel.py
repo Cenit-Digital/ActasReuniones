@@ -186,6 +186,16 @@ def test_buscar_escapa_el_fragmento(cliente, repo):
     assert "1 &lt; 2 &amp;" in r.text and "<img" not in r.text
 
 
+def test_buscar_un_segmento_con_script_lo_muestra_como_texto(cliente, repo):
+    """@a22 tal cual: ts_headline borra lo que toma por etiquetas; el panel se las oculta y las devuelve escapadas."""
+    _transcrita(
+        repo, [{"hablante": "sociopruebaa", "inicio_ms": 0, "fin_ms": 1, "texto": "presupuesto <script>x</script> & fin"}]
+    )
+    r = cliente.get("/buscar", params={"q": "presupuesto"}, headers=USUARIO)
+    assert "<mark>presupuesto</mark> &lt;script&gt;x&lt;/script&gt; &amp; fin" in r.text
+    assert "<script>" not in r.text
+
+
 def test_buscar_vacio_no_consulta(cliente):
     r = cliente.get("/buscar", params={"q": "   "}, headers=USUARIO)
     assert r.status_code == 200 and "<mark>" not in r.text

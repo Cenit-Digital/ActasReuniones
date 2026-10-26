@@ -11,11 +11,10 @@ import json
 import re
 from collections.abc import Collection, Sequence
 
-from actas.conformidad import TOPE_SOCIOS, ConformidadNoValida, Peticion, validar
+from actas.conformidad import STREAM_ID, TOPE_SOCIOS, ConformidadNoValida, Peticion, validar
 
 _USUARIO = re.compile(r"[A-Za-z0-9._@-]{1,64}")
 _FICHERO_TEXTO = re.compile(r"informativo-([A-Za-z0-9._-]{1,40})\.md")
-_STREAM_ID = re.compile(r"[a-z0-9]{1,32}")
 TOPE_NOMBRE = 64
 
 
@@ -52,7 +51,7 @@ def socios_conocidos(texto: str) -> dict[str, str]:
     for d in datos:
         sid = d.get("id") if isinstance(d, dict) else None
         nombre = d.get("nombre") if isinstance(d, dict) else None
-        if not isinstance(sid, str) or not _STREAM_ID.fullmatch(sid) or sid in socios:
+        if not isinstance(sid, str) or not STREAM_ID.fullmatch(sid) or sid in socios:
             raise SociosNoValidos("cada socio con un streamID distinto, alfanumérico en minúscula")
         if not isinstance(nombre, str) or not nombre.strip() or len(nombre) > TOPE_NOMBRE:
             raise SociosNoValidos(f"cada socio con un nombre de 1 a {TOPE_NOMBRE} caracteres")

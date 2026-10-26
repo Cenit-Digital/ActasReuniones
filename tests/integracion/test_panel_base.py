@@ -8,7 +8,7 @@ import psycopg
 import pytest
 
 from actas import base
-from actas.busqueda import FIN, INICIO, LIMITE, OPCIONES
+from actas.busqueda import FIN, INICIO, LIMITE, OPCIONES, PONER, QUITAR, resaltar
 from actas.conformidad import Peticion
 from actas.estados import Estado
 
@@ -137,21 +137,23 @@ def test_buscar_presupuesto_da_la_reunion_el_hablante_y_el_tiempo(repo_panel, re
             {"hablante": "sociopruebab", "inicio_ms": 90_000, "fin_ms": 95_000, "texto": "De acuerdo con el viaje"},
         ],
     )
-    hallados = repo_panel.buscar("presupuesto", LIMITE, INICIO + FIN, OPCIONES)
+    hallados = repo_panel.buscar("presupuesto", LIMITE, QUITAR, PONER, OPCIONES)
     assert [(h["reunion_id"], h["hablante"], h["inicio_ms"]) for h in hallados] == [(rid, "sociopruebaa", 75_000)]
     assert f"{INICIO}presupuesto{FIN}" in hallados[0]["fragmento"]
 
 
-def test_buscar_devuelve_el_fragmento_sin_escapar_para_escaparlo_despues(repo_panel, repo):
-    # ts_headline quita lo que su analizador toma por etiquetas (`<script>`), pero no escapa el resto: `<` y `&` llegan crudos.
-    _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": "presupuesto 1 < 2 & 3 <script"}])
-    (h,) = repo_panel.buscar("presupuesto", LIMITE, INICIO + FIN, OPCIONES)
-    assert "<" in h["fragmento"] and "&" in h["fragmento"]
+def test_buscar_conserva_las_etiquetas_ocultas_para_escaparlas_despues(repo_panel, repo):
+    # ts_headline quitaría lo que su analizador toma por etiquetas (`<script>`): llegan ocultos tras los sustitutos de < > &.
+    texto = "presupuesto <script>x</script> & 1 < 2"
+    _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": texto}])
+    (h,) = repo_panel.buscar("presupuesto", LIMITE, QUITAR, PONER, OPCIONES)
+    assert "<" not in h["fragmento"] and "&" not in h["fragmento"]
+    assert str(resaltar(h["fragmento"])) == "<mark>presupuesto</mark> &lt;script&gt;x&lt;/script&gt; &amp; 1 &lt; 2"
 
 
 def test_buscar_quita_los_centinelas_del_texto_original(repo_panel, repo):
     _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": f"{FIN}presupuesto{INICIO} x"}])
-    (h,) = repo_panel.buscar("presupuesto", LIMITE, INICIO + FIN, OPCIONES)
+    (h,) = repo_panel.buscar("presupuesto", LIMITE, QUITAR, PONER, OPCIONES)
     assert h["fragmento"].count(INICIO) == h["fragmento"].count(FIN) == 1
     assert h["fragmento"].index(INICIO) < h["fragmento"].index(FIN)
 
@@ -162,13 +164,13 @@ def test_buscar_con_tope(repo_panel, repo):
         ("pablo",),
         [{"hablante": "pablo", "inicio_ms": i * 1000, "fin_ms": i * 1000 + 1, "texto": "presupuesto"} for i in range(5)],
     )
-    assert [h["inicio_ms"] for h in repo_panel.buscar("presupuesto", 3, INICIO + FIN, OPCIONES)] == [0, 1000, 2000]
+    assert [h["inicio_ms"] for h in repo_panel.buscar("presupuesto", 3, QUITAR, PONER, OPCIONES)] == [0, 1000, 2000]
 
 
 @pytest.mark.parametrize("q", ['"plan de" or -', "((( )))", "de la el", "&|!:*"])
 def test_buscar_nunca_falla_por_la_sintaxis(repo_panel, repo, q):
     _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": "presupuesto"}])
-    assert repo_panel.buscar(q, LIMITE, INICIO + FIN, OPCIONES) == []
+    assert repo_panel.buscar(q, LIMITE, QUITAR, PONER, OPCIONES) == []
 
 
 def test_detalle_en_una_sola_consulta_de_conexion(repo_panel, repo):

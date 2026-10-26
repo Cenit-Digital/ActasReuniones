@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anyio" },
     { name = "jinja2" },
+    { name = "markupsafe" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-multipart" },
     { name = "starlette" },
@@ -29,6 +30,7 @@ dev = [
 requires-dist = [
     { name = "anyio", specifier = "==4.15.1" },
     { name = "jinja2", specifier = "==3.1.6" },
+    { name = "markupsafe", specifier = "==3.0.4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "python-multipart", specifier = "==0.0.32" },
     { name = "starlette", specifier = "==1.7.0" },
