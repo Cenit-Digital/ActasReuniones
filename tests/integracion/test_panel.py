@@ -58,6 +58,17 @@ def test_usuario_mal_formado_401(cliente, valor):
     assert cliente.get("/", headers={**PROXY, "x-actas-usuario": valor}).status_code == 401
 
 
+@pytest.mark.parametrize("variante", ["x_actas_usuario", "X_Actas_Usuario", "x-actas_usuario"])
+def test_solo_vale_la_cabecera_de_usuario_exacta(cliente, repo, variante):
+    """Traefik solo sobrescribe X-Actas-Usuario exacta: una variante con guion bajo (estilo CGI) no cuenta como usuario."""
+    assert cliente.get("/", headers={**PROXY, variante: "intruso"}).status_code == 401
+    r = cliente.post(
+        "/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**PROXY, variante: "intruso", "origin": ORIGEN}
+    )
+    assert r.status_code == 401
+    assert _cuenta(repo) == (0, 0)
+
+
 @pytest.mark.parametrize("proxy", [{}, {"x-actas-proxy": "otro"}, {"x-actas-proxy": ""}])
 def test_sin_el_secreto_de_traefik_401_aunque_traiga_usuario(cliente, repo, proxy):
     """M1: un camino al pod que no sea la ruta de Traefik no puede hacerse pasar por un usuario."""
