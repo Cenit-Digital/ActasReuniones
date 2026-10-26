@@ -142,7 +142,7 @@ jobs:
           persist-credentials: false
       - name: Dependencias con sus hashes (requirements-ci.txt, exportado de uv.lock)
         run: python3 -m pip install --break-system-packages --quiet --require-hashes --no-deps -r requirements-ci.txt
-      - name: Test del grabador (CDP por WebSocket y descargas)
+      - name: Tests del grabador (CDP por WebSocket y descargas) y de los formularios del panel en un navegador real
         env:
           PYTHONPATH: src
-        run: python3 -m pytest -rs tests/integracion/test_grabador.py
+        run: python3 -m pytest -rs tests/integracion/test_grabador.py tests/integracion/test_panel_navegador.py

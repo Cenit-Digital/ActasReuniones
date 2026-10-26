@@ -83,7 +83,7 @@ jobs:
           # El DSN no se usa hasta la primera consulta: /salud no toca la base.
           docker run -d --name panel --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
             -v "$d:/config:ro" -e ACTAS_SOCIOS_FICHERO=/config/socios.json -e ACTAS_SECRETO_PROXY_FICHERO=/config/proxy \
-            -e ACTAS_DSN=postgresql:///actas \
+            -e ACTAS_DSN=postgresql:///actas -e ACTAS_ORIGEN=http://127.0.0.1:18080 \
             -p 127.0.0.1:18080:8080 "$PRUEBA" actas.panel
           for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:18080/salud && break; sleep 1; done
           curl -fsS -D /tmp/salud.h http://127.0.0.1:18080/salud | grep -qx ok
@@ -98,6 +98,27 @@ jobs:
           docker logs panel > /tmp/panel.log 2>&1
           grep -q "petición fallida: OperationalError" /tmp/panel.log
           if grep -q marcaunicahumo /tmp/panel.log; then echo "::error::la consulta salió en el registro"; exit 1; fi
+          # «Grabar» desde un Chromium real (el de producción, la imagen del job grabador de harness-ci.yml): el navegador pone
+          # Origin y Sec-Fetch-Site, no el test. Pasa la defensa CSRF y, sin base, falla en repo.pedir (500); un 403 sería el
+          # `Origin: null` de la prueba real de KubernetesInfrastructure#287.
+          docker run --rm --network host --user pwuser \
+            mcr.microsoft.com/playwright/python@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0 \
+            python3 -I -c '
+          from playwright.sync_api import sync_playwright
+          P = "http://127.0.0.1:18080"
+          with sync_playwright() as p:
+              b = p.chromium.launch()
+              pagina = b.new_page(extra_http_headers={"X-Actas-Proxy": "secreto-de-humo", "X-Actas-Usuario": "humo"})
+              assert pagina.goto(P + "/grabar").status == 200
+              pagina.check("input[name=socio][value=pablo]")
+              with pagina.expect_response(lambda r: r.request.method == "POST") as respuesta:
+                  pagina.click("form[method=post] button[type=submit]")
+              r = respuesta.value
+              origin = r.request.all_headers().get("origin")
+              print("POST /grabar:", r.status, "Origin:", origin)
+              assert origin == P and r.status == 500, (origin, r.status)
+              b.close()
+          '
           docker rm -f panel >/dev/null
       - name: Tamaño (tope 150 MB sin comprimir)
         run: |

@@ -62,6 +62,7 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Dado un POST a «Grabar» o «Parar» con Sec-Fetch-Site cross-site, con Origin de otro sitio o null, o sin ninguna de las dos
     Cuando llega al panel
     Entonces responde 403 y no hay ninguna fila nueva
+    Pero el formulario del propio panel, enviado desde un navegador, lleva el Origin del panel (Referrer-Policy same-origin) y se acepta
 
   Escenario: @a32 sin rastro en los registros
     Dado una búsqueda con una marca única
