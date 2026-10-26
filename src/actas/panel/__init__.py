@@ -42,12 +42,21 @@ AQUI = Path(__file__).resolve().parent
 TEXTOS = AQUI.parent / "textos"
 CABECERA_USUARIO = "x-actas-usuario"
 CABECERA_PROXY = "x-actas-proxy"
+# Referrer-Policy `same-origin`, en la cabecera y en el <meta> de base.html, y nunca `no-referrer`: Fetch Standard, «append a
+# request `Origin` header», para un POST que no es CORS (un <form method="post"> es "navigate") «switch on request's referrer
+# policy: "no-referrer": Set serializedOrigin to `null`», y `origen.permitido` rechaza `Origin: null` (@a31): era el 403 de
+# «Grabar» en la prueba real de #287. En "same-origin", «If request's origin is not same origin with request's current URL's
+# origin, then set serializedOrigin to `null`»: un POST del propio panel lleva su origen, y a otros orígenes no va ningún
+# `Referer` (Referrer Policy de W3C, §3.3: «Cross-origin-referrer requests [...] will contain no referrer information»).
+# Traefik añade `strict-origin-when-cross-origin`: si se suma a esta cabecera, «the value of the latest one will be used»
+# (§11.1); y el <meta>, que se aplica después, manda sobre las dos («set element's node document's policy container's referrer
+# policy», HTML). Ninguna combinación da `null` en un POST https al mismo origen (tests/unit/test_referrer_panel.py).
 CABECERAS = {
     "content-security-policy": (
         "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     ),
     "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
+    "referrer-policy": "same-origin",
     "cache-control": "no-store",
     "cross-origin-resource-policy": "same-origin",
     "cross-origin-opener-policy": "same-origin",

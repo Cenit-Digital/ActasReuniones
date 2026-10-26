@@ -1,7 +1,11 @@
 """PostgreSQL de pruebas: `export ACTAS_DSN_PRUEBAS="$(scripts/pg-pruebas.sh arrancar)"`. Sin él, estos tests se saltan
-(la CI los ejecuta siempre: ver harness-ci.yml)."""
+(la CI los ejecuta siempre: ver harness-ci.yml). Y el Chromium de los tests del grabador y del panel (`ACTAS_CHROMIUM`)."""
 
 import os
+import subprocess
+import tempfile
+import time
+import urllib.request
 import uuid
 
 import psycopg
@@ -48,3 +52,34 @@ def repo_panel(dsn, repo):
     r = base.Repositorio(psycopg.conninfo.make_conninfo(url, user="actas_panel", password="pruebas"), esquema)
     yield r
     r.cerrar()
+
+
+@pytest.fixture
+def chromium():
+    """El navegador de los tests de Chromium (grabador y panel): `ACTAS_CHROMIUM` = ruta del binario; sin ella, se salta."""
+    binario = os.environ.get("ACTAS_CHROMIUM")
+    if not binario:
+        pytest.skip("sin ACTAS_CHROMIUM")
+    perfil = tempfile.mkdtemp()
+    proc = subprocess.Popen(  # noqa: S603
+        [
+            binario,
+            "--headless=new",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--remote-debugging-port=9333",
+            f"--user-data-dir={perfil}",
+            "about:blank",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    for _ in range(100):
+        try:
+            urllib.request.urlopen("http://127.0.0.1:9333/json/version", timeout=1)  # noqa: S310
+            break
+        except OSError:
+            time.sleep(0.1)
+    yield "http://127.0.0.1:9333"
+    proc.terminate()
+    proc.wait(10)

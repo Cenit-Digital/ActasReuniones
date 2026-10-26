@@ -119,7 +119,7 @@ def test_csp_estricta_en_todas_las_respuestas(cliente, ruta, cabeceras):
         "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     assert r.headers["x-content-type-options"] == "nosniff"
-    assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["referrer-policy"] == "same-origin"
     assert r.headers["cache-control"] == "no-store"
     assert r.headers["cross-origin-resource-policy"] == "same-origin"
     assert r.headers["cross-origin-opener-policy"] == "same-origin"

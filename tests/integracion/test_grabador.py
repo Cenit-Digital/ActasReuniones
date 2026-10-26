@@ -3,12 +3,8 @@ una página por socio con la URL de VDO.Ninja, lee los streams de la sala y, al 
 `<id>_<ms>.webm` en el directorio de la reunión. `ACTAS_CHROMIUM` = ruta del binario; sin ella, el test se salta."""
 
 import functools
-import os
-import subprocess
-import tempfile
 import threading
 import time
-import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -20,36 +16,6 @@ from actas.pistas import pistas_de
 from actas.registro import Registro
 
 SALA_FALSA = Path(__file__).parent / "sala_falsa"
-
-
-@pytest.fixture
-def chromium():
-    binario = os.environ.get("ACTAS_CHROMIUM")
-    if not binario:
-        pytest.skip("sin ACTAS_CHROMIUM")
-    perfil = tempfile.mkdtemp()
-    proc = subprocess.Popen(  # noqa: S603
-        [
-            binario,
-            "--headless=new",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--remote-debugging-port=9333",
-            f"--user-data-dir={perfil}",
-            "about:blank",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    for _ in range(100):
-        try:
-            urllib.request.urlopen("http://127.0.0.1:9333/json/version", timeout=1)  # noqa: S310
-            break
-        except OSError:
-            time.sleep(0.1)
-    yield "http://127.0.0.1:9333"
-    proc.terminate()
-    proc.wait(10)
 
 
 @pytest.fixture

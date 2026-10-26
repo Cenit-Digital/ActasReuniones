@@ -83,9 +83,11 @@ jobs:
           # El DSN no se usa hasta la primera consulta: /salud no toca la base.
           docker run -d --name panel --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
             -v "$d:/config:ro" -e ACTAS_SOCIOS_FICHERO=/config/socios.json -e ACTAS_SECRETO_PROXY_FICHERO=/config/proxy \
-            -e ACTAS_DSN=postgresql:///actas \
+            -e ACTAS_DSN=postgresql:///actas -e ACTAS_ORIGEN=http://127.0.0.1:8080 \
             -p 127.0.0.1:18080:8080 "$PRUEBA" actas.panel
-          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:18080/salud && break; sleep 1; done
+          # Mientras uvicorn arranca, docker-proxy acepta y corta la conexión («Connection reset by peer»): la espera va en silencio y
+          # la comprobación de la línea siguiente, con -fsS, es la que falla si al final no responde.
+          for _ in $(seq 1 30); do curl -fs -o /dev/null http://127.0.0.1:18080/salud && break; sleep 1; done
           curl -fsS -D /tmp/salud.h http://127.0.0.1:18080/salud | grep -qx ok
           if grep -qi '^server:' /tmp/salud.h; then echo "::error::cabecera Server"; exit 1; fi
           grep -qi "^content-security-policy: default-src 'none'" /tmp/salud.h
@@ -98,6 +100,51 @@ jobs:
           docker logs panel > /tmp/panel.log 2>&1
           grep -q "petición fallida: OperationalError" /tmp/panel.log
           if grep -q marcaunicahumo /tmp/panel.log; then echo "::error::la consulta salió en el registro"; exit 1; fi
+          # «Grabar» desde un Chromium real: el de producción (la imagen de Playwright del job grabador de harness-ci.yml, que solo
+          # trae los navegadores: su paquete de Python se borra al construirla), manejado por CDP con actas.cdp desde esta misma
+          # imagen. Los dos, en la red del contenedor del panel. El navegador pone Origin y Sec-Fetch-Site, no el test: pasa la
+          # defensa CSRF y, sin base, falla en repo.pedir (500); un 403 con `Origin: null` es el fallo de la prueba real de
+          # KubernetesInfrastructure#287.
+          docker run -d --name navegador --network container:panel --user pwuser \
+            mcr.microsoft.com/playwright/python@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0 \
+            /ms-playwright/chromium-1243/chrome-linux64/chrome --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
+            --remote-debugging-port=9222 --user-data-dir=/tmp/perfil about:blank
+          docker run --rm --network container:panel --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /opt/actas/venv/bin/python "$PRUEBA" -I -c '
+          import time
+          from actas.cdp import Cdp, esperar_chromium
+          from actas.registro import Registro
+          P = "http://127.0.0.1:8080"
+          esperar_chromium("http://127.0.0.1:9222", plazo_s=30, intervalo_s=1)
+          cdp = Cdp("http://127.0.0.1:9222", Registro())
+          post = {}
+          def ver(m):
+              p = m.get("params", {})
+              if m.get("method") == "Network.requestWillBeSent" and p["request"]["method"] == "POST":
+                  post["id"] = p["requestId"]
+              elif m.get("method") == "Network.requestWillBeSentExtraInfo" and p.get("requestId") == post.get("id"):
+                  post["origin"] = {k.lower(): v for k, v in p["headers"].items()}.get("origin")
+              elif m.get("method") == "Network.responseReceived" and p.get("requestId") == post.get("id"):
+                  post["estado"] = p["response"]["status"]
+          cdp.manejadores.append(ver)
+          t = cdp.enviar("Target.createTarget", {"url": "about:blank"})["targetId"]
+          s = cdp.enviar("Target.attachToTarget", {"targetId": t, "flatten": True})["sessionId"]
+          cdp.enviar("Network.enable", sesion=s)
+          cdp.enviar("Network.setExtraHTTPHeaders", {"headers": {"X-Actas-Proxy": "secreto-de-humo", "X-Actas-Usuario": "humo"}}, sesion=s)
+          cdp.enviar("Page.navigate", {"url": P + "/grabar"}, sesion=s)
+          for _ in range(50):
+              if cdp.evaluar(s, "!!document.querySelector(`form[method=post]`)"):
+                  break
+              time.sleep(0.2)
+          cdp.evaluar(s, "document.querySelector(`input[value=pablo]`).checked = true; document.querySelector(`form[method=post] button`).click()")
+          for _ in range(50):
+              if "estado" in post and "origin" in post:
+                  break
+              time.sleep(0.2)
+          print("POST /grabar:", post.get("estado"), "Origin:", post.get("origin"))
+          assert post.get("origin") == P and post.get("estado") == 500, post
+          '
+          docker rm -f navegador >/dev/null
           docker rm -f panel >/dev/null
       - name: Tamaño (tope 150 MB sin comprimir)
         run: |
