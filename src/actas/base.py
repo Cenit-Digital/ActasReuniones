@@ -72,12 +72,12 @@ class Repositorio:
             c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
             yield c
 
-    def pedir(self, peticion: Peticion) -> str:
-        """@a6: la reunión y una conformidad por socio, en la misma transacción."""
+    def pedir(self, peticion: Peticion, pedido_por: str | None = None) -> str:
+        """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2)."""
         with self.conexion() as c:
             fila = c.execute(
-                "INSERT INTO reuniones (socios, texto_version) VALUES (%s, %s) RETURNING id",
-                (list(peticion.socios), peticion.version),
+                "INSERT INTO reuniones (socios, texto_version, pedido_por) VALUES (%s, %s, %s) RETURNING id",
+                (list(peticion.socios), peticion.version, pedido_por),
             ).fetchone()
             assert fila is not None
             rid = str(fila[0])
@@ -193,6 +193,36 @@ class Repositorio:
                 (rid,),
             ).fetchall()
         return [(f[0], f[1], f[2], f[3]) for f in filas]
+
+    def ultimas(self, limite: int) -> list[dict[str, Any]]:
+        """Las últimas reuniones, de la más nueva a la más vieja (lista del panel)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT id, creado_en, inicio, fin, estado, motivo, socios, pedido_por FROM reuniones "
+                "ORDER BY creado_en DESC, id DESC LIMIT %s",
+                (limite,),
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def buscar(self, q: str, limite: int, centinelas: str, opciones: str) -> list[dict[str, Any]]:
+        """@a22: los segmentos que casan con `websearch_to_tsquery('spanish', q)` (índice GIN de `tsv`), como mucho `limite`, y
+        su resaltado. `ts_headline` va fuera del LIMIT («can be slow») y sobre el texto sin los centinelas de `opciones`."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                """WITH q AS (SELECT websearch_to_tsquery('spanish', %(q)s) AS q),
+                        hallados AS (
+                            SELECT s.reunion_id, r.creado_en, s.hablante, s.inicio_ms, s.texto
+                            FROM segmentos s JOIN reuniones r ON r.id = s.reunion_id, q
+                            WHERE s.tsv @@ q.q
+                            ORDER BY r.creado_en DESC, s.reunion_id, s.inicio_ms, s.id
+                            LIMIT %(limite)s)
+                   SELECT h.reunion_id, h.creado_en, h.hablante, h.inicio_ms,
+                          ts_headline('spanish', translate(h.texto, %(centinelas)s, ''), q.q, %(opciones)s) AS fragmento
+                   FROM hallados h, q
+                   ORDER BY h.creado_en DESC, h.reunion_id, h.inicio_ms""",
+                {"q": q, "limite": limite, "centinelas": centinelas, "opciones": opciones},
+            ).fetchall()
+        return [_fila(f) for f in filas]
 
     def reintentar(self, rid: str) -> bool:
         """Una reunión en `error` vuelve a `grabada` para enviar otra vez su audio (si aún existe)."""
