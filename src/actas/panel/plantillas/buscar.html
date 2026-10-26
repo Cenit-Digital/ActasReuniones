@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block titulo %}Buscar{% endblock %}
+{% block contenido %}
+<h1>Buscar en las transcripciones</h1>
+{% if q %}
+{% if hallados %}
+<p>{{ hallados | length }} resultado{% if hallados | length != 1 %}s{% endif %}{% if hallados | length == limite %} (como mucho {{ limite }}){% endif %}.</p>
+<ol class="resultados">
+{% for h in hallados %}
+<li><a href="/reuniones/{{ h.id }}">{{ h.fecha }}</a> · <time>{{ h.tiempo }}</time> <strong>{{ h.hablante }}</strong><br>{{ h.fragmento }}</li>
+{% endfor %}
+</ol>
+{% else %}
+<p>Sin resultados.</p>
+{% endif %}
+{% else %}
+<p>Escribe una o varias palabras. Admite «"frase exacta"», «or» y «-palabra».</p>
+{% endif %}
+{% endblock %}

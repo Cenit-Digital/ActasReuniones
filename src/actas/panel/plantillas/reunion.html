@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block titulo %}Reunión del {{ fecha }}{% endblock %}
+{% block contenido %}
+<h1>Reunión del {{ fecha }}</h1>
+<dl>
+<dt>Estado</dt><dd>{{ r.estado }}{% if r.motivo %} ({{ r.motivo }}){% endif %}</dd>
+<dt>Duración</dt><dd>{{ duracion }}</dd>
+<dt>Socios</dt><dd>{{ socios }}</dd>
+<dt>Pedida por</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
+<dt>Conformidades</dt><dd>{% for nombre, version in conformidades %}{{ nombre }} (texto {{ version }}){% if not loop.last %}, {% endif %}{% endfor %}</dd>
+</dl>
+{% if r.estado == "grabando" %}
+<form method="post" action="/parar" class="parar"><button type="submit">Parar</button></form>
+{% endif %}
+<h2>Transcripción</h2>
+{% if segmentos %}
+<ol class="transcripcion">
+{% for tiempo, hablante, texto in segmentos %}
+<li><time>{{ tiempo }}</time> <strong>{{ hablante }}</strong> {{ texto }}</li>
+{% endfor %}
+</ol>
+{% else %}
+<p>Aún no hay transcripción.</p>
+{% endif %}
+{% endblock %}

@@ -1,7 +1,7 @@
 [project]
 name = "actas"
 version = "0.1.0"
-description = "Actas de las reuniones de socios de Cenit Digital: supervisor del grabador y cliente de la plataforma de transcripción"
+description = "Actas de las reuniones de socios de Cenit Digital: supervisor del grabador, cliente de la plataforma de transcripción y panel"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
@@ -54,6 +54,8 @@ files = ["src"]
 strict = true
 python_version = "3.12"
 
-# Las migraciones viajan dentro del paquete (actas/migraciones): base.migrar las busca ahí en la imagen.
+# Las migraciones y los textos informativos viajan dentro del paquete (actas/migraciones y actas/textos): base.migrar y
+# panel.cargar_textos los buscan ahí en la imagen.
 [tool.hatch.build.targets.wheel.force-include]
 "migraciones" = "actas/migraciones"
+"textos" = "actas/textos"

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{% block titulo %}Actas{% endblock %} · Cenit Digital</title>
+<link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+<header>
+<nav aria-label="Principal">
+<a href="/">Reuniones</a>
+<a href="/grabar">Grabar</a>
+<form method="get" action="/buscar" role="search">
+<label for="q">Buscar</label>
+<input id="q" name="q" type="search" maxlength="200" value="{{ q | default('') }}">
+<button type="submit">Buscar</button>
+</form>
+</nav>
+</header>
+<main>
+{% block contenido %}{% endblock %}
+</main>
+</body>
+</html>

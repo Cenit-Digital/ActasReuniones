@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block titulo %}Reuniones{% endblock %}
+{% block contenido %}
+<h1>Reuniones</h1>
+{% if activa %}
+<form method="post" action="/parar" class="parar">
+<p>Hay una grabación en curso.</p>
+<button type="submit">Parar</button>
+</form>
+{% endif %}
+{% if reuniones %}
+<table>
+<thead><tr><th scope="col">Fecha</th><th scope="col">Duración</th><th scope="col">Estado</th><th scope="col">Motivo</th><th scope="col">Socios</th></tr></thead>
+<tbody>
+{% for r in reuniones %}
+<tr>
+<td><a href="/reuniones/{{ r.id }}">{{ r.fecha }}</a></td>
+<td>{{ r.duracion }}</td>
+<td>{{ r.estado }}</td>
+<td>{{ r.motivo }}</td>
+<td>{{ r.socios }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Aún no hay reuniones.</p>
+{% endif %}
+{% endblock %}

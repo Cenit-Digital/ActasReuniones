@@ -24,7 +24,7 @@
     ".editorconfig", ".gitattributes", ".gitignore", ".github/CODEOWNERS", ".github/workflows/harness-ci.yml",
     "LICENSE", "README.md", "docs/architecture.md", "docs/conventions.md",
     "features/", "src/", "tests/",
-    "migraciones/", "pyproject.toml", "uv.lock", "scripts/pg-pruebas.sh", ".github/workflows/imagen.yml", "Dockerfile",
+    "migraciones/", "textos/", "pyproject.toml", "uv.lock", "scripts/pg-pruebas.sh", ".github/workflows/imagen.yml", "Dockerfile",
     ".dockerignore", "cosmic-ray.toml", "requirements-ci.txt"
   ],
   "excluded": [

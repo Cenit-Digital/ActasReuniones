@@ -1,0 +1,218 @@
+"""Panel de actas de F2 (KubernetesInfrastructure#287, ADR 0015 decisión 8): grabar, parar, consultar y buscar, detrás de
+NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que el supervisor.
+
+- Escribe solo con `Repositorio.pedir` y `Repositorio.pedir_parada`, las mismas funciones que `actas.sh`: @a6 y el trigger
+  diferido de conformidades aplican igual por las dos vías. El rol `actas_panel` no puede hacer nada más (migración 0002).
+- Quién pulsa: la cabecera `X-Actas-Usuario`, que pone el Middleware `basicauth` de Traefik (`headerField`, con `removeHeader`
+  para que la contraseña no llegue aquí). Su NetworkPolicy solo deja entrar a Traefik. Sin ella, 401 y nada se escribe.
+- CSRF: `origen.permitido` antes de leer el formulario de cualquier POST.
+- Sin JavaScript y con CSP estricta; sin registro de accesos ni texto de las peticiones en el registro (@a32).
+
+Plantillas: Starlette 1.7.0, docs/templates.md: «When using the `directory` argument, Starlette enables autoescape by default
+for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`». El único `Markup` es el de `busqueda.resaltar`.
+"""
+
+from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, RedirectResponse, Response
+from starlette.routing import Route
+from starlette.templating import Jinja2Templates
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from actas import busqueda, presentacion
+from actas.base import Repositorio, _es_uuid
+from actas.conformidad import ConformidadNoValida
+from actas.formulario import usuario, validar_grabar, version_de_fichero
+from actas.origen import permitido
+from actas.registro import Registro
+
+AQUI = Path(__file__).resolve().parent
+TEXTOS = AQUI.parent / "textos"
+CABECERA_USUARIO = "x-actas-usuario"
+CABECERAS = {
+    "content-security-policy": "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "cache-control": "no-store",
+}
+TOPE_CUERPO = 16 * 1024
+TOPE_CAMPOS = 32
+TOPE_LISTA = 100
+RUTAS_SIN_USUARIO = frozenset({"/salud"})
+
+
+def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
+    """{versión: texto} de `textos/informativo-<versión>.md`: dentro de la imagen van junto al paquete; en el repo, en textos/."""
+    raiz = raiz or (TEXTOS if TEXTOS.is_dir() else Path(__file__).resolve().parents[3] / "textos")
+    textos = {}
+    for p in sorted(raiz.glob("informativo-*.md")):
+        version = version_de_fichero(p.name)
+        if version:
+            textos[version] = p.read_text(encoding="utf-8")
+    if not textos:
+        raise FileNotFoundError("ningún texto informativo")
+    return textos
+
+
+class _Guardia:
+    """Delante de todas las rutas: cabeceras de seguridad en cada respuesta, usuario de Traefik, CSRF y tope del cuerpo de los
+    POST, y los errores sin traza (el mensaje de una excepción de la base puede llevar el texto de una fila)."""
+
+    def __init__(self, app: ASGIApp, origen: str, registro: Registro) -> None:
+        self.app, self.origen, self.registro = app, origen, registro
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        empezada = False
+
+        async def enviar(mensaje: Message) -> None:
+            nonlocal empezada
+            if mensaje["type"] == "http.response.start":
+                empezada = True
+                cabeceras = MutableHeaders(scope=mensaje)
+                for k, v in CABECERAS.items():
+                    cabeceras[k] = v
+            await send(mensaje)
+
+        try:
+            rechazo = self._rechazo(Request(scope))
+            await (rechazo or self.app)(scope, receive, enviar)
+        except Exception as e:  # noqa: BLE001 — sin traza ni mensaje: solo el tipo
+            self.registro("petición fallida:", type(e).__name__)
+            if not empezada:
+                await PlainTextResponse("Error interno", status_code=500)(scope, receive, enviar)
+
+    def _rechazo(self, peticion: Request) -> Response | None:
+        if peticion.url.path in RUTAS_SIN_USUARIO:
+            return None
+        if usuario(peticion.headers.get(CABECERA_USUARIO)) is None:
+            return PlainTextResponse("Falta el usuario de BasicAuth", status_code=401)
+        if peticion.method == "POST":
+            if not permitido(peticion.headers, self.origen):
+                return PlainTextResponse("Petición de otro origen", status_code=403)
+            longitud = peticion.headers.get("content-length", "")
+            if not longitud.isdigit():
+                return PlainTextResponse("Falta Content-Length", status_code=411)
+            if int(longitud) > TOPE_CUERPO:
+                return PlainTextResponse("Formulario demasiado grande", status_code=413)
+        return None
+
+
+def crear_app(
+    repo: Repositorio, socios: Mapping[str, str], textos: Mapping[str, str], origen: str, registro: Registro
+) -> ASGIApp:
+    plantillas = Jinja2Templates(directory=AQUI / "plantillas")
+    estilo = (AQUI / "estatico" / "estilo.css").read_bytes()
+    vigente = max(textos)
+    texto = presentacion.bloques(textos[vigente])
+
+    def pagina(peticion: Request, nombre: str, contexto: dict[str, Any], estado: int = 200) -> Response:
+        return plantillas.TemplateResponse(peticion, nombre, contexto, status_code=estado)
+
+    async def en_hilo(f: Callable[..., Any], *args: Any) -> Any:
+        return await run_in_threadpool(f, *args)
+
+    async def salud(_: Request) -> Response:
+        return PlainTextResponse("ok")
+
+    async def hoja(_: Request) -> Response:
+        return Response(estilo, media_type="text/css")
+
+    async def lista(peticion: Request) -> Response:
+        reuniones = await en_hilo(repo.ultimas, TOPE_LISTA)
+        filas = [
+            {
+                "id": r["id"],
+                "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
+                "duracion": presentacion.duracion(r["inicio"], r["fin"]),
+                "estado": r["estado"],
+                "motivo": r["motivo"] or "",
+                "socios": presentacion.nombres(r["socios"], socios),
+            }
+            for r in reuniones
+        ]
+        activa = any(r["estado"] == "grabando" for r in reuniones)
+        return pagina(peticion, "lista.html", {"reuniones": filas, "activa": activa})
+
+    async def reunion(peticion: Request) -> Response:
+        rid = peticion.path_params["rid"]
+        if not _es_uuid(rid):
+            raise HTTPException(404)
+        try:
+            r = await en_hilo(repo.reunion, rid)
+        except KeyError:
+            raise HTTPException(404) from None
+        segmentos = await en_hilo(repo.segmentos, rid)
+        conformidades = await en_hilo(repo.conformidades, rid)
+        contexto = {
+            "r": r,
+            "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
+            "duracion": presentacion.duracion(r["inicio"], r["fin"]),
+            "socios": presentacion.nombres(r["socios"], socios),
+            "conformidades": [(presentacion.nombres([s], socios), v) for s, v in conformidades],
+            "segmentos": [(presentacion.hhmmss(ini), presentacion.nombres([h], socios), t) for h, ini, _fin, t in segmentos],
+        }
+        return pagina(peticion, "reunion.html", contexto)
+
+    async def buscar(peticion: Request) -> Response:
+        crudo = peticion.query_params.get("q")
+        q = busqueda.normalizar(crudo)
+        hallados = []
+        if q is not None:
+            filas = await en_hilo(repo.buscar, q, busqueda.LIMITE, busqueda.INICIO + busqueda.FIN, busqueda.OPCIONES)
+            hallados = [
+                {
+                    "id": h["reunion_id"],
+                    "fecha": h["creado_en"].strftime("%Y-%m-%d %H:%M"),
+                    "hablante": presentacion.nombres([h["hablante"]], socios),
+                    "tiempo": presentacion.hhmmss(h["inicio_ms"]),
+                    "fragmento": busqueda.resaltar(h["fragmento"]),
+                }
+                for h in filas
+            ]
+        return pagina(peticion, "buscar.html", {"q": q or "", "hallados": hallados, "limite": busqueda.LIMITE})
+
+    async def formulario_grabar(peticion: Request, error: str = "", estado: int = 200) -> Response:
+        contexto = {"socios": list(socios.items()), "version": vigente, "texto": texto, "error": error}
+        return pagina(peticion, "grabar.html", contexto, estado)
+
+    async def ver_grabar(peticion: Request) -> Response:
+        return await formulario_grabar(peticion)
+
+    async def grabar(peticion: Request) -> Response:
+        form = await peticion.form(max_files=0, max_fields=TOPE_CAMPOS, max_part_size=TOPE_CUERPO)
+        marcados = [s for s in form.getlist("socio") if isinstance(s, str)]
+        version = form.get("version")
+        try:
+            pedida = validar_grabar(marcados, version if isinstance(version, str) else "", socios, (vigente,))
+        except ConformidadNoValida as e:
+            return await formulario_grabar(peticion, str(e), 400)
+        rid = await en_hilo(repo.pedir, pedida, peticion.headers[CABECERA_USUARIO])
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    async def parar(peticion: Request) -> Response:
+        rid = await en_hilo(repo.pedir_parada)
+        if rid is None:
+            return pagina(peticion, "mensaje.html", {"mensaje": "No hay ninguna grabación activa."}, 409)
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    rutas = [
+        Route("/salud", salud),
+        Route("/estilo.css", hoja),
+        Route("/", lista),
+        Route("/reuniones/{rid}", reunion),
+        Route("/buscar", buscar),
+        Route("/grabar", ver_grabar, methods=["GET"]),
+        Route("/grabar", grabar, methods=["POST"]),
+        Route("/parar", parar, methods=["POST"]),
+    ]
+    return _Guardia(Starlette(debug=False, routes=rutas), origen, registro)

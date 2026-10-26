@@ -1,6 +1,8 @@
-# Imagen del supervisor de las actas: ghcr.io/cenit-digital/actas-supervisor (workflow imagen.yml).
-# Solo Python, psycopg y websockets: Chromium va en su propio contenedor (imagen oficial de Playwright por digest), sin
-# ningún Secret. Raíz de solo lectura, sin capacidades y con usuario sin privilegios (lo fija también el pod).
+# Imagen del supervisor de las actas: ghcr.io/cenit-digital/actas-supervisor (workflow imagen.yml). La misma imagen sirve el
+# panel de F2 con otro argumento (`args: ["actas.panel"]`, KubernetesInfrastructure#287).
+# Solo Python, psycopg, websockets y lo del panel (Starlette, Jinja2, python-multipart y uvicorn): Chromium va en su propio
+# contenedor (imagen oficial de Playwright por digest), sin ningún Secret. Raíz de solo lectura, sin capacidades y con usuario
+# sin privilegios (lo fija también el pod).
 
 # python:3.12-slim-trixie (Python 3.12.15), manifiesto linux/amd64, leído con `crane digest --platform` el 2026-10-24.
 FROM docker.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c AS construir
@@ -12,6 +14,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 COPY migraciones ./migraciones
+COPY textos ./textos
 RUN uv sync --locked --no-dev --no-editable
 
 FROM docker.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c

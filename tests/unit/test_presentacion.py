@@ -53,3 +53,25 @@ def test_nombres_de_los_socios_conocidos_y_streamid_de_los_demas():
     conocidos = {"pablo": "Pablo", "andres": "Andrés"}
     assert nombres(["pablo", "andres", "otro"], conocidos) == "Pablo, Andrés, otro"
     assert nombres([], conocidos) == ""
+
+
+def test_bloques_del_texto_informativo():
+    from actas.presentacion import bloques
+
+    texto = "# Título\n\nUn párrafo\nen dos líneas.\n\n## Apartado\n\n- uno\n- dos\n\n\nFinal.\n"
+    assert bloques(texto) == [
+        ("h2", ["Título"]),
+        ("p", ["Un párrafo en dos líneas."]),
+        ("h3", ["Apartado"]),
+        ("ul", ["uno", "dos"]),
+        ("p", ["Final."]),
+    ]
+
+
+def test_bloques_con_lista_mezclada_es_parrafo_y_vacio_no_da_nada():
+    from actas.presentacion import bloques
+
+    assert bloques("- uno\nno es lista") == [("p", ["- uno no es lista"])]
+    assert bloques(" \n\n") == []
+    assert bloques("#sin espacio") == [("p", ["#sin espacio"])]
+    assert bloques("  ## Con sangría  ") == [("h3", ["Con sangría"])]

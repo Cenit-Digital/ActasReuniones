@@ -15,7 +15,7 @@ LIMITE = 50
 TOPE_CONSULTA = 200
 INICIO = ""
 FIN = ""
-OPCIONES = f"StartSel={INICIO}, StopSel={FIN}, MaxFragments=2, MaxWords=30, MinWords=10"
+OPCIONES = f"StartSel={INICIO}, StopSel={FIN}, MaxWords=30, MinWords=10"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 

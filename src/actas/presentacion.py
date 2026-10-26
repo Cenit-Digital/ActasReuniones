@@ -24,3 +24,21 @@ def duracion(inicio: datetime | None, fin: datetime | None) -> str:
 def nombres(socios: Iterable[str], conocidos: Mapping[str, str]) -> str:
     return ", ".join(conocidos.get(s, s) for s in socios)
 
+
+def bloques(texto: str) -> list[tuple[str, list[str]]]:
+    """El texto informativo (`textos/*.md`, un subconjunto mínimo de Markdown) en bloques que la plantilla escapa: `# ` y `## `
+    son títulos, un bloque con todas sus líneas en `- ` es una lista y lo demás, un párrafo. Sin HTML ni enlaces."""
+    salida: list[tuple[str, list[str]]] = []
+    for crudo in texto.split("\n\n"):
+        lineas = [linea.strip() for linea in crudo.splitlines() if linea.strip()]
+        if not lineas:
+            continue
+        if len(lineas) == 1 and lineas[0].startswith("## "):
+            salida.append(("h3", [lineas[0][3:].strip()]))
+        elif len(lineas) == 1 and lineas[0].startswith("# "):
+            salida.append(("h2", [lineas[0][2:].strip()]))
+        elif all(linea.startswith("- ") for linea in lineas):
+            salida.append(("ul", [linea[2:].strip() for linea in lineas]))
+        else:
+            salida.append(("p", [" ".join(lineas)]))
+    return salida
