@@ -19,7 +19,7 @@ MISMO_ORIGEN = {**USUARIO, "sec-fetch-site": "same-origin", "origin": ORIGEN}
 
 @pytest.fixture
 def cliente(repo_panel):
-    app = crear_app(repo_panel, SOCIOS, TEXTOS, ORIGEN, Registro())
+    app = crear_app(repo_panel, SOCIOS, TEXTOS, VERSION, ORIGEN, Registro())
     with TestClient(app, base_url=ORIGEN, follow_redirects=False) as c:
         yield c
 
@@ -54,16 +54,6 @@ def test_sin_usuario_401(cliente, ruta):
 @pytest.mark.parametrize("valor", ["", "pa blo", "x" * 65])
 def test_usuario_mal_formado_401(cliente, valor):
     assert cliente.get("/", headers={"x-actas-usuario": valor}).status_code == 401
-
-
-def test_salud_sin_usuario_ni_base(repo_panel):
-    class SinBase:
-        def __getattr__(self, _):
-            raise AssertionError("la sonda no toca la base")
-
-    with TestClient(crear_app(SinBase(), SOCIOS, TEXTOS, ORIGEN, Registro())) as c:  # type: ignore[arg-type]
-        r = c.get("/salud")
-    assert (r.status_code, r.text) == (200, "ok")
 
 
 def test_grabar_sin_usuario_401_y_nada_escrito(cliente, repo):
@@ -212,6 +202,34 @@ def test_grabar_con_cuerpo_demasiado_grande_413(cliente, repo):
     assert _cuenta(repo) == (0, 0)
 
 
+def _trozos(datos: bytes):
+    yield datos[:10]
+    yield datos[10:]
+
+
+def test_grabar_con_cuerpo_por_trozos_sin_content_length(cliente, repo):
+    # Traefik reenvía por trozos (Transfer-Encoding: chunked) si no conoce la longitud: el tope se cuenta, sin exigir la cabecera.
+    cuerpo = f"socio=pablo&version={VERSION}".encode()
+    r = cliente.post(
+        "/grabar",
+        content=_trozos(cuerpo),
+        headers={**MISMO_ORIGEN, "content-type": "application/x-www-form-urlencoded"},
+    )
+    assert r.status_code == 303
+    assert _cuenta(repo) == (1, 1)
+
+
+def test_grabar_por_trozos_demasiado_grande_413(cliente, repo):
+    cuerpo = f"socio=pablo&version={VERSION}&relleno={'x' * 20_000}".encode()
+    r = cliente.post(
+        "/grabar",
+        content=_trozos(cuerpo),
+        headers={**MISMO_ORIGEN, "content-type": "application/x-www-form-urlencoded"},
+    )
+    assert r.status_code == 413
+    assert _cuenta(repo) == (0, 0)
+
+
 def test_grabar_con_ficheros_400(cliente, repo):
     r = cliente.post("/grabar", data={"version": VERSION}, files={"socio": ("a.txt", b"pablo")}, headers=MISMO_ORIGEN)
     assert r.status_code == 400
@@ -239,6 +257,15 @@ def test_parar_sin_grabacion_activa_lo_dice_y_no_escribe(cliente, repo):
 def test_la_lista_ofrece_parar_solo_con_una_grabacion_activa(cliente, repo):
     assert 'action="/parar"' not in cliente.get("/", headers=USUARIO).text
     _grabando(repo)
+    assert 'action="/parar"' in cliente.get("/", headers=USUARIO).text
+
+
+def test_la_lista_ofrece_parar_aunque_la_activa_no_este_entre_las_ultimas(cliente, repo, monkeypatch):
+    import actas.panel
+
+    monkeypatch.setattr(actas.panel, "TOPE_LISTA", 1)
+    _grabando(repo)
+    repo.pedir(Peticion(("pablo",), "v1"))
     assert 'action="/parar"' in cliente.get("/", headers=USUARIO).text
 
 

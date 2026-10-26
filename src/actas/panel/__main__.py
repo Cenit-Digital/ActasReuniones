@@ -1,7 +1,8 @@
 """Proceso del panel: `python -m actas.panel`. Configuración por entorno (KubernetesInfrastructure, kubernetes/apps/actas):
 
-ACTAS_DSN                 libpq del rol actas_panel (la contraseña en PGPASSWORD; PGTZ=Europe/Madrid para las fechas)
+ACTAS_DSN                 libpq del rol actas_panel (la contraseña en PGPASSWORD); las fechas, en hora de Madrid
 ACTAS_SOCIOS_FICHERO      JSON con los socios conocidos, [{"id": "pablo", "nombre": "Pablo"}, …] (ConfigMap montado)
+ACTAS_TEXTO_VERSION       la versión del texto informativo de «Grabar»; obligatoria si la imagen trae más de uno
 ACTAS_ORIGEN              el origen del panel para la defensa CSRF (por defecto https://actas.cenitdigital.es)
 ACTAS_PANEL_PUERTO        8080
 ACTAS_PANEL_CONCURRENCIA  4: como mucho las conexiones que admite actas_panel (una por petición)
@@ -21,17 +22,21 @@ import uvicorn
 from starlette.types import ASGIApp
 
 from actas.base import Repositorio
-from actas.formulario import socios_conocidos
+from actas.formulario import socios_conocidos, version_vigente
 from actas.panel import cargar_textos, crear_app
 from actas.registro import Registro
 
 ORIGEN = "https://actas.cenitdigital.es"
+ZONA = "Europe/Madrid"
 
 
 def preparar(e: Mapping[str, str]) -> tuple[ASGIApp, Registro]:
     registro = Registro([e.get("PGPASSWORD", "")])
     socios = socios_conocidos(Path(e["ACTAS_SOCIOS_FICHERO"]).read_text(encoding="utf-8"))
-    app = crear_app(Repositorio(e["ACTAS_DSN"]), socios, cargar_textos(), e.get("ACTAS_ORIGEN", ORIGEN), registro)
+    textos = cargar_textos()
+    vigente = version_vigente(textos, e.get("ACTAS_TEXTO_VERSION"))
+    repo = Repositorio(e["ACTAS_DSN"], zona=ZONA)
+    app = crear_app(repo, socios, textos, vigente, e.get("ACTAS_ORIGEN", ORIGEN), registro)
     return app, registro
 
 

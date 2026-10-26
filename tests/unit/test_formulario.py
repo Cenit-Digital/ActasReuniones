@@ -113,3 +113,24 @@ def test_hasta_16_socios_conocidos():
 )
 def test_version_de_fichero(nombre, version):
     assert version_de_fichero(nombre) == version
+
+
+def test_version_vigente_explicita():
+    from actas.formulario import version_vigente
+
+    assert version_vigente({"v9": "", "v10": ""}, "v10") == "v10"
+
+
+def test_version_vigente_unica_sin_configurar():
+    from actas.formulario import version_vigente
+
+    assert version_vigente({"2026-10-26": ""}, None) == "2026-10-26"
+    assert version_vigente({"2026-10-26": ""}, "") == "2026-10-26"
+
+
+@pytest.mark.parametrize(("textos", "pedida"), [({"v9": "", "v10": ""}, None), ({"v1": ""}, "v2"), ({}, None)])
+def test_version_vigente_ambigua_o_desconocida_no_arranca_el_panel(textos, pedida):
+    from actas.formulario import TextoNoValido, version_vigente
+
+    with pytest.raises(TextoNoValido):
+        version_vigente(textos, pedida)

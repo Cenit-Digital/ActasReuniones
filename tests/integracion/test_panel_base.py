@@ -2,9 +2,12 @@
 panel escribe solo con Repositorio.pedir y Repositorio.pedir_parada, así que @a6 y el trigger diferido aplican igual que en
 `actas.sh`."""
 
+from datetime import timedelta
+
 import psycopg
 import pytest
 
+from actas import base
 from actas.busqueda import FIN, INICIO, LIMITE, OPCIONES
 from actas.conformidad import Peticion
 from actas.estados import Estado
@@ -166,3 +169,36 @@ def test_buscar_con_tope(repo_panel, repo):
 def test_buscar_nunca_falla_por_la_sintaxis(repo_panel, repo, q):
     _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": "presupuesto"}])
     assert repo_panel.buscar(q, LIMITE, INICIO + FIN, OPCIONES) == []
+
+
+def test_detalle_en_una_sola_consulta_de_conexion(repo_panel, repo):
+    rid = _transcrita(repo, ("pablo",), [{"hablante": "pablo", "inicio_ms": 0, "fin_ms": 1, "texto": "hola"}])
+    r, conformidades, segmentos = repo_panel.detalle(rid)
+    assert (r["id"], r["estado"]) == (rid, "transcrita")
+    assert conformidades == [("pablo", "v1")]
+    assert segmentos == [("pablo", 0, 1, "hola")]
+
+
+def test_detalle_de_una_reunion_que_no_existe(repo_panel):
+    with pytest.raises(KeyError):
+        repo_panel.detalle("00000000-0000-0000-0000-000000000000")
+
+
+def test_hay_grabacion_activa_aunque_no_este_entre_las_ultimas(repo):
+    assert repo.hay_grabacion() is False
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO)
+    for _ in range(3):
+        repo.pedir(Peticion(("pablo",), "v1"))
+    assert rid not in [r["id"] for r in repo.ultimas(2)]
+    assert repo.hay_grabacion() is True
+
+
+def test_fechas_en_la_zona_del_panel(dsn, repo):
+    url, esquema = dsn
+    repo.pedir(Peticion(("pablo",), "v1"))
+    madrid = base.Repositorio(url, esquema, zona="Europe/Madrid").ultimas(1)[0]["creado_en"]
+    utc = base.Repositorio(url, esquema, zona="UTC").ultimas(1)[0]["creado_en"]
+    assert madrid == utc
+    assert madrid.utcoffset() in {timedelta(hours=1), timedelta(hours=2)}
+    assert utc.utcoffset() == timedelta(0)

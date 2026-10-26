@@ -27,7 +27,7 @@ from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from actas import busqueda, presentacion
-from actas.base import Repositorio, _es_uuid
+from actas.base import Repositorio, es_uuid
 from actas.conformidad import ConformidadNoValida
 from actas.formulario import usuario, validar_grabar, version_de_fichero
 from actas.origen import permitido
@@ -63,7 +63,11 @@ def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
 
 class _Guardia:
     """Delante de todas las rutas: cabeceras de seguridad en cada respuesta, usuario de Traefik, CSRF y tope del cuerpo de los
-    POST, y los errores sin traza (el mensaje de una excepción de la base puede llevar el texto de una fila)."""
+    POST, y los errores sin traza (el mensaje de una excepción de la base puede llevar el texto de una fila).
+
+    Un error en una ruta lo responde el ServerErrorMiddleware de Starlette (500 «Internal Server Error», sin detalle con
+    debug=False) y lo vuelve a lanzar «to allow servers to log the error»: aquí se registra solo su tipo y no sigue hasta
+    uvicorn, que lo escribiría con su traza. El 500 propio solo sale si el error es anterior a la respuesta de Starlette."""
 
     def __init__(self, app: ASGIApp, origen: str, registro: Registro) -> None:
         self.app, self.origen, self.registro = app, origen, registro
@@ -84,7 +88,10 @@ class _Guardia:
             await send(mensaje)
 
         try:
-            rechazo = self._rechazo(Request(scope))
+            peticion = Request(scope)
+            rechazo = self._rechazo(peticion)
+            if rechazo is None and peticion.method == "POST":
+                receive, rechazo = await _cuerpo_con_tope(receive)
             await (rechazo or self.app)(scope, receive, enviar)
         except Exception as e:  # noqa: BLE001 — sin traza ni mensaje: solo el tipo
             self.registro("petición fallida:", type(e).__name__)
@@ -100,19 +107,54 @@ class _Guardia:
             if not permitido(peticion.headers, self.origen):
                 return PlainTextResponse("Petición de otro origen", status_code=403)
             longitud = peticion.headers.get("content-length", "")
-            if not longitud.isdigit():
-                return PlainTextResponse("Falta Content-Length", status_code=411)
-            if int(longitud) > TOPE_CUERPO:
-                return PlainTextResponse("Formulario demasiado grande", status_code=413)
+            if longitud.isdigit() and int(longitud) > TOPE_CUERPO:
+                return _demasiado_grande()
         return None
 
 
+def _demasiado_grande() -> Response:
+    return PlainTextResponse("Formulario demasiado grande", status_code=413)
+
+
+async def _cuerpo_con_tope(receive: Receive) -> tuple[Receive, Response | None]:
+    """Lee el cuerpo entero, como mucho TOPE_CUERPO bytes, y lo vuelve a entregar a la aplicación. Cuenta los bytes en vez de
+    fiarse de Content-Length: Traefik reenvía por trozos cuando no conoce la longitud."""
+    trozos: list[bytes] = []
+    total = 0
+    while True:
+        mensaje = await receive()
+        if mensaje["type"] != "http.request":
+            return receive, PlainTextResponse("Petición interrumpida", status_code=400)
+        trozo = mensaje.get("body", b"")
+        total += len(trozo)
+        if total > TOPE_CUERPO:
+            return receive, _demasiado_grande()
+        trozos.append(trozo)
+        if not mensaje.get("more_body", False):
+            break
+    entregado = False
+
+    async def repetir() -> Message:
+        nonlocal entregado
+        if entregado:
+            return await receive()
+        entregado = True
+        return {"type": "http.request", "body": b"".join(trozos), "more_body": False}
+
+    return repetir, None
+
+
 def crear_app(
-    repo: Repositorio, socios: Mapping[str, str], textos: Mapping[str, str], origen: str, registro: Registro
+    repo: Repositorio,
+    socios: Mapping[str, str],
+    textos: Mapping[str, str],
+    vigente: str,
+    origen: str,
+    registro: Registro,
 ) -> ASGIApp:
+    """`vigente`: la versión del texto informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente)."""
     plantillas = Jinja2Templates(directory=AQUI / "plantillas")
     estilo = (AQUI / "estatico" / "estilo.css").read_bytes()
-    vigente = max(textos)
     texto = presentacion.bloques(textos[vigente])
 
     def pagina(peticion: Request, nombre: str, contexto: dict[str, Any], estado: int = 200) -> Response:
@@ -140,19 +182,17 @@ def crear_app(
             }
             for r in reuniones
         ]
-        activa = any(r["estado"] == "grabando" for r in reuniones)
+        activa = await en_hilo(repo.hay_grabacion)
         return pagina(peticion, "lista.html", {"reuniones": filas, "activa": activa})
 
     async def reunion(peticion: Request) -> Response:
         rid = peticion.path_params["rid"]
-        if not _es_uuid(rid):
+        if not es_uuid(rid):
             raise HTTPException(404)
         try:
-            r = await en_hilo(repo.reunion, rid)
+            r, conformidades, segmentos = await en_hilo(repo.detalle, rid)
         except KeyError:
             raise HTTPException(404) from None
-        segmentos = await en_hilo(repo.segmentos, rid)
-        conformidades = await en_hilo(repo.conformidades, rid)
         contexto = {
             "r": r,
             "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),

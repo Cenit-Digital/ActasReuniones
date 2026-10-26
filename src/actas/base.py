@@ -59,9 +59,11 @@ def migrar(dsn: str, esquema: str = "actas", password: str | None = None) -> lis
 
 
 class Repositorio:
-    def __init__(self, dsn: str, esquema: str = "actas") -> None:
+    def __init__(self, dsn: str, esquema: str = "actas", zona: str | None = None) -> None:
+        """`zona`: la zona horaria de la sesión (TimeZone), en la que llegan las fechas; el panel pide Europe/Madrid."""
         self._dsn = dsn
         self._esquema = _esquema(esquema)
+        self._zona = zona
 
     def cerrar(self) -> None:
         """Sin pool: una conexión por operación (como mucho unas pocas por minuto)."""
@@ -70,6 +72,8 @@ class Repositorio:
     def conexion(self) -> Iterator[psycopg.Connection[Any]]:
         with psycopg.connect(self._dsn) as c:
             c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
+            if self._zona:
+                c.execute("SELECT set_config('TimeZone', %s, false)", (self._zona,))
             yield c
 
     def pedir(self, peticion: Peticion, pedido_por: str | None = None) -> str:
@@ -119,7 +123,7 @@ class Repositorio:
     def estados_de(self, ids: Sequence[str]) -> dict[str, tuple[str, float]]:
         """(estado, momento de referencia en epoch) de cada reunión: el fin de la grabación o, si no lo hay, su creación. El
         plazo del audio se cuenta desde aquí y no desde el mtime del directorio, que puede tocar Chromium."""
-        validos = [i for i in ids if _es_uuid(i)]
+        validos = [i for i in ids if es_uuid(i)]
         with self.conexion() as c:
             filas = c.execute(
                 "SELECT id::text, estado, extract(epoch FROM coalesce(fin, creado_en))::float8 "
@@ -204,6 +208,26 @@ class Repositorio:
             ).fetchall()
         return [_fila(f) for f in filas]
 
+    def hay_grabacion(self) -> bool:
+        with self.conexion() as c:
+            fila = c.execute("SELECT EXISTS (SELECT 1 FROM reuniones WHERE estado = 'grabando')").fetchone()
+        return bool(fila and fila[0])
+
+    def detalle(self, rid: str) -> tuple[dict[str, Any], list[tuple[str, str]], list[tuple[str, int, int, str]]]:
+        """La reunión, sus conformidades y sus segmentos con una sola conexión (vista de la reunión del panel)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            fila = cur.execute("SELECT * FROM reuniones WHERE id = %s", (rid,)).fetchone()
+            if fila is None:
+                raise KeyError(rid)
+            conformidades = c.execute(
+                "SELECT socio, texto_version FROM conformidades WHERE reunion_id = %s ORDER BY socio", (rid,)
+            ).fetchall()
+            segmentos = c.execute(
+                "SELECT hablante, inicio_ms, fin_ms, texto FROM segmentos WHERE reunion_id = %s ORDER BY inicio_ms, fin_ms",
+                (rid,),
+            ).fetchall()
+        return _fila(fila), [(f[0], f[1]) for f in conformidades], [(f[0], f[1], f[2], f[3]) for f in segmentos]
+
     def buscar(self, q: str, limite: int, centinelas: str, opciones: str) -> list[dict[str, Any]]:
         """@a22: los segmentos que casan con `websearch_to_tsquery('spanish', q)` (índice GIN de `tsv`), como mucho `limite`, y
         su resaltado. `ts_headline` va fuera del LIMIT («can be slow») y sobre el texto sin los centinelas de `opciones`."""
@@ -250,7 +274,7 @@ def _fila(fila: dict[str, Any]) -> dict[str, Any]:
     return {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in fila.items()}
 
 
-def _es_uuid(texto: str) -> bool:
+def es_uuid(texto: str) -> bool:
     try:
         uuid.UUID(texto)
     except ValueError:
@@ -258,4 +282,4 @@ def _es_uuid(texto: str) -> bool:
     return True
 
 
-__all__ = ["Repositorio", "migrar"]
+__all__ = ["Repositorio", "es_uuid", "migrar"]

@@ -60,6 +60,22 @@ def socios_conocidos(texto: str) -> dict[str, str]:
     return socios
 
 
+class TextoNoValido(ValueError):
+    """No se sabe qué texto informativo mostrar: el panel no arranca."""
+
+
+def version_vigente(textos: Collection[str], pedida: str | None) -> str:
+    """La versión que muestra «Grabar»: la configurada (ACTAS_TEXTO_VERSION) o, si no hay, la única empaquetada. Nunca se elige
+    por orden alfabético («v10» < «v9»)."""
+    if pedida:
+        if pedida not in textos:
+            raise TextoNoValido("la versión configurada no es la de ningún texto empaquetado")
+        return pedida
+    if len(textos) != 1:
+        raise TextoNoValido("hay varios textos informativos: configura ACTAS_TEXTO_VERSION")
+    return next(iter(textos))
+
+
 def version_de_fichero(nombre: str) -> str | None:
     m = _FICHERO_TEXTO.fullmatch(nombre)
     return m.group(1) if m else None

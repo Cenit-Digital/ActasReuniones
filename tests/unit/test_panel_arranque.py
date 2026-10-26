@@ -41,6 +41,13 @@ def test_preparar_lee_socios_textos_y_origen(entorno):
     assert callable(app)
 
 
+def test_preparar_con_una_version_que_no_existe_falla(entorno):
+    from actas.formulario import TextoNoValido
+
+    with pytest.raises(TextoNoValido):
+        preparar({**entorno, "ACTAS_TEXTO_VERSION": "no-existe"})
+
+
 def test_preparar_sin_fichero_de_socios_falla(entorno, tmp_path):
     with pytest.raises(FileNotFoundError):
         preparar({**entorno, "ACTAS_SOCIOS_FICHERO": str(tmp_path / "no")})
@@ -70,7 +77,7 @@ class _BaseRota:
 
 
 def test_un_error_no_deja_rastro_de_la_peticion_ni_de_la_base(capsys):
-    app = crear_app(_BaseRota(), {"pablo": "Pablo"}, {"v1": "x"}, "https://actas.cenitdigital.es", Registro())  # type: ignore[arg-type]
+    app = crear_app(_BaseRota(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://actas.cenitdigital.es", Registro())  # type: ignore[arg-type]
     with TestClient(app) as c:
         r = c.get("/buscar", params={"q": "marca-unica-de-la-busqueda"}, headers={"x-actas-usuario": "panel"})
     assert r.status_code == 500 and "marca" not in r.text
@@ -78,3 +85,28 @@ def test_un_error_no_deja_rastro_de_la_peticion_ni_de_la_base(capsys):
     err = capsys.readouterr()
     assert "petición fallida: RuntimeError" in err.err
     assert "marca" not in err.err + err.out
+
+
+def test_salud_sin_usuario_ni_base():
+    class SinBase:
+        def __getattr__(self, _):
+            raise AssertionError("la sonda no toca la base")
+
+    app = crear_app(SinBase(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://actas.cenitdigital.es", Registro())  # type: ignore[arg-type]
+    with TestClient(app) as c:
+        r = c.get("/salud")
+    assert (r.status_code, r.text) == (200, "ok")
+
+
+def test_el_panel_pide_las_fechas_en_hora_de_madrid(entorno, monkeypatch):
+    import actas.panel.__main__ as m
+
+    vistos = {}
+
+    class Repo:
+        def __init__(self, dsn, zona=None):
+            vistos.update(dsn=dsn, zona=zona)
+
+    monkeypatch.setattr(m, "Repositorio", Repo)
+    preparar(entorno)
+    assert vistos == {"dsn": "postgresql:///actas", "zona": "Europe/Madrid"}
