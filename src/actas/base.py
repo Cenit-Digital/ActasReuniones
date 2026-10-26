@@ -7,7 +7,7 @@ Los errores de la base se registran solo por su tipo: un INSERT de un segmento l
 
 import re
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -59,25 +59,33 @@ def migrar(dsn: str, esquema: str = "actas", password: str | None = None) -> lis
 
 
 class Repositorio:
-    def __init__(self, dsn: str, esquema: str = "actas") -> None:
+    def __init__(self, dsn: str, esquema: str = "actas", ajustes: Mapping[str, str] | None = None) -> None:
+        """`ajustes`: parámetros de la sesión (set_config) en cada conexión; el panel pide TimeZone y statement_timeout."""
         self._dsn = dsn
         self._esquema = _esquema(esquema)
+        self._ajustes = dict(ajustes or {})
 
     def cerrar(self) -> None:
         """Sin pool: una conexión por operación (como mucho unas pocas por minuto)."""
 
     @contextmanager
     def conexion(self) -> Iterator[psycopg.Connection[Any]]:
-        with psycopg.connect(self._dsn) as c:
-            c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
-            yield c
+        c = psycopg.connect(self._dsn)
+        try:
+            with c:  # confirma al salir; si el COMMIT falla (trigger diferido), la conexión se cierra igual en el finally
+                c.execute(sql.SQL("SET search_path = {}").format(self._esquema))
+                for nombre, valor in self._ajustes.items():
+                    c.execute("SELECT set_config(%s, %s, false)", (nombre, valor))
+                yield c
+        finally:
+            c.close()
 
-    def pedir(self, peticion: Peticion) -> str:
-        """@a6: la reunión y una conformidad por socio, en la misma transacción."""
+    def pedir(self, peticion: Peticion, pedido_por: str | None = None) -> str:
+        """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2)."""
         with self.conexion() as c:
             fila = c.execute(
-                "INSERT INTO reuniones (socios, texto_version) VALUES (%s, %s) RETURNING id",
-                (list(peticion.socios), peticion.version),
+                "INSERT INTO reuniones (socios, texto_version, pedido_por) VALUES (%s, %s, %s) RETURNING id",
+                (list(peticion.socios), peticion.version, pedido_por),
             ).fetchone()
             assert fila is not None
             rid = str(fila[0])
@@ -119,7 +127,7 @@ class Repositorio:
     def estados_de(self, ids: Sequence[str]) -> dict[str, tuple[str, float]]:
         """(estado, momento de referencia en epoch) de cada reunión: el fin de la grabación o, si no lo hay, su creación. El
         plazo del audio se cuenta desde aquí y no desde el mtime del directorio, que puede tocar Chromium."""
-        validos = [i for i in ids if _es_uuid(i)]
+        validos = [i for i in ids if es_uuid(i)]
         with self.conexion() as c:
             filas = c.execute(
                 "SELECT id::text, estado, extract(epoch FROM coalesce(fin, creado_en))::float8 "
@@ -194,6 +202,57 @@ class Repositorio:
             ).fetchall()
         return [(f[0], f[1], f[2], f[3]) for f in filas]
 
+    def ultimas(self, limite: int) -> list[dict[str, Any]]:
+        """Las últimas reuniones, de la más nueva a la más vieja (lista del panel)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT id, creado_en, inicio, fin, estado, motivo, socios, pedido_por FROM reuniones "
+                "ORDER BY creado_en DESC, id DESC LIMIT %s",
+                (limite,),
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def hay_grabacion(self) -> bool:
+        with self.conexion() as c:
+            fila = c.execute("SELECT EXISTS (SELECT 1 FROM reuniones WHERE estado = 'grabando')").fetchone()
+        return bool(fila and fila[0])
+
+    def detalle(self, rid: str) -> tuple[dict[str, Any], list[tuple[str, str]], list[tuple[str, int, int, str]]]:
+        """La reunión, sus conformidades y sus segmentos con una sola conexión (vista de la reunión del panel)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            fila = cur.execute("SELECT * FROM reuniones WHERE id = %s", (rid,)).fetchone()
+            if fila is None:
+                raise KeyError(rid)
+            conformidades = c.execute(
+                "SELECT socio, texto_version FROM conformidades WHERE reunion_id = %s ORDER BY socio", (rid,)
+            ).fetchall()
+            segmentos = c.execute(
+                "SELECT hablante, inicio_ms, fin_ms, texto FROM segmentos WHERE reunion_id = %s ORDER BY inicio_ms, fin_ms",
+                (rid,),
+            ).fetchall()
+        return _fila(fila), [(f[0], f[1]) for f in conformidades], [(f[0], f[1], f[2], f[3]) for f in segmentos]
+
+    def buscar(self, q: str, limite: int, quitar: str, poner: str, opciones: str) -> list[dict[str, Any]]:
+        """@a22: los segmentos que casan con `websearch_to_tsquery('spanish', q)` (índice GIN de `tsv`), como mucho `limite`, y
+        su resaltado. `ts_headline` va fuera del LIMIT («can be slow») y sobre `translate(texto, quitar, poner)`: sin centinelas
+        propios y con `<`, `>` y `&` ocultos (busqueda.QUITAR y busqueda.PONER)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                """WITH q AS (SELECT websearch_to_tsquery('spanish', %(q)s) AS q),
+                        hallados AS (
+                            SELECT s.reunion_id, r.creado_en, s.hablante, s.inicio_ms, s.texto
+                            FROM segmentos s JOIN reuniones r ON r.id = s.reunion_id, q
+                            WHERE s.tsv @@ q.q
+                            ORDER BY r.creado_en DESC, s.reunion_id, s.inicio_ms, s.id
+                            LIMIT %(limite)s)
+                   SELECT h.reunion_id, h.creado_en, h.hablante, h.inicio_ms,
+                          ts_headline('spanish', translate(h.texto, %(quitar)s, %(poner)s), q.q, %(opciones)s) AS fragmento
+                   FROM hallados h, q
+                   ORDER BY h.creado_en DESC, h.reunion_id, h.inicio_ms""",
+                {"q": q, "limite": limite, "quitar": quitar, "poner": poner, "opciones": opciones},
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
     def reintentar(self, rid: str) -> bool:
         """Una reunión en `error` vuelve a `grabada` para enviar otra vez su audio (si aún existe)."""
         try:
@@ -220,7 +279,7 @@ def _fila(fila: dict[str, Any]) -> dict[str, Any]:
     return {k: str(v) if isinstance(v, uuid.UUID) else v for k, v in fila.items()}
 
 
-def _es_uuid(texto: str) -> bool:
+def es_uuid(texto: str) -> bool:
     try:
         uuid.UUID(texto)
     except ValueError:
@@ -228,4 +287,4 @@ def _es_uuid(texto: str) -> bool:
     return True
 
 
-__all__ = ["Repositorio", "migrar"]
+__all__ = ["Repositorio", "es_uuid", "migrar"]

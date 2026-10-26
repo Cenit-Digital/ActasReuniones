@@ -12,7 +12,7 @@ from actas.estados import Estado, TransicionNoValida
 
 def test_migrar_es_idempotente(dsn):
     url, esquema = dsn
-    assert base.migrar(url, esquema) == ["0001_esquema.sql"]
+    assert base.migrar(url, esquema) == ["0001_esquema.sql", "0002_panel.sql"]
     assert base.migrar(url, esquema) == []
 
 
@@ -140,9 +140,16 @@ def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
         c.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(base_datos), sql.Identifier(rol)))
     try:
         dsn_rol = psycopg.conninfo.make_conninfo(url, user=rol, password=None)
-        assert base.migrar(dsn_rol, esquema, password=clave) == ["0001_esquema.sql"]
+        assert base.migrar(dsn_rol, esquema, password=clave) == ["0001_esquema.sql", "0002_panel.sql"]
     finally:
         with psycopg.connect(url, autocommit=True) as c:
             c.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(esquema)))
             c.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(esquema)))
             c.execute(sql.SQL("DROP OWNED BY {}; DROP ROLE {}").format(sql.Identifier(rol), sql.Identifier(rol)))
+
+
+def test_una_transaccion_rechazada_al_confirmar_cierra_la_conexion(repo):
+    # El trigger diferido falla en el COMMIT, al salir del `with`: la conexión no debe quedar abierta (ResourceWarning).
+    with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
+        c.execute("INSERT INTO reuniones (socios, texto_version) VALUES ('{socioa}', 'v1')")
+    assert c.closed

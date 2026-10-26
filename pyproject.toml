@@ -1,12 +1,19 @@
 [project]
 name = "actas"
 version = "0.1.0"
-description = "Actas de las reuniones de socios de Cenit Digital: supervisor del grabador y cliente de la plataforma de transcripción"
+description = "Actas de las reuniones de socios de Cenit Digital: supervisor del grabador, cliente de la plataforma de transcripción y panel"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
     "psycopg[binary]>=3.2",
     "websockets>=15.0",
+    # Panel de F2 (KubernetesInfrastructure#287): la última versión publicada hace 14 días o más el 2026-10-26, fijada.
+    "starlette==1.7.0",
+    "jinja2==3.1.6",
+    "markupsafe==3.0.4",
+    "python-multipart==0.0.32",
+    "uvicorn==0.54.0",
+    "anyio==4.15.1",
 ]
 
 [dependency-groups]
@@ -15,6 +22,8 @@ dev = [
     "ruff>=0.14",
     "mypy>=1.18",
     "cosmic-ray>=8.7",
+    # Cliente de pruebas de Starlette 1.7.0 (docs/testclient.md: «The TestClient is built on httpx2»).
+    "httpx2==2.13.1",
 ]
 
 [build-system]
@@ -47,6 +56,8 @@ files = ["src"]
 strict = true
 python_version = "3.12"
 
-# Las migraciones viajan dentro del paquete (actas/migraciones): base.migrar las busca ahí en la imagen.
+# Las migraciones y los textos informativos viajan dentro del paquete (actas/migraciones y actas/textos): base.migrar y
+# panel.cargar_textos los buscan ahí en la imagen.
 [tool.hatch.build.targets.wheel.force-include]
 "migraciones" = "actas/migraciones"
+"textos" = "actas/textos"
