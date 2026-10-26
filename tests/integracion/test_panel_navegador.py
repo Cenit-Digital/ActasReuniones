@@ -20,6 +20,8 @@ RID = "00000000-0000-0000-0000-000000000001"
 
 
 class _Repo:
+    """Lo justo para las tres páginas con formulario POST, y apunta lo que piden «Grabar» y «Parar»."""
+
     def __init__(self) -> None:
         self.pedidas: list[tuple[object, str]] = []
         self.paradas = 0
@@ -63,8 +65,7 @@ def panel():
     srv = uvicorn.Server(config)
     hilo = threading.Thread(target=srv.run, daemon=True)
     hilo.start()
-    while not srv.started:
-        time.sleep(0.05)
+    assert _esperar(lambda: srv.started), "uvicorn no arrancó"
     yield origen, repo, posts
     srv.should_exit = True
     hilo.join(10)
@@ -76,10 +77,8 @@ def _enviar_formulario(cdp, url, preparar_js):
     cdp.enviar("Network.enable", sesion=s)
     cdp.enviar("Network.setExtraHTTPHeaders", {"headers": {"X-Actas-Proxy": SECRETO, "X-Actas-Usuario": "panel"}}, sesion=s)
     cdp.enviar("Page.navigate", {"url": url}, sesion=s)
-    for _ in range(100):
-        if cdp.evaluar(s, "document.readyState === 'complete' && !!document.querySelector('form[method=post]')"):
-            break
-        time.sleep(0.1)
+    cargada = "document.readyState === 'complete' && !!document.querySelector('form[method=post]')"
+    assert _esperar(lambda: cdp.evaluar(s, cargada)), f"{url} no muestra el formulario"
     cdp.evaluar(s, preparar_js + "; document.querySelector('form[method=post] button[type=submit]').click(); true")
     return t, s
 

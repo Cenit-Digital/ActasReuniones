@@ -61,7 +61,7 @@ class _Metas(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
         if tag == "meta" and (a.get("name") or "").lower() == "referrer" and a.get("content"):
-            self.valores.append((a["content"] or "").lower())
+            self.valores.append(a["content"].lower())
 
 
 def politica_del_documento(cabeceras: list[str], html: str) -> str:
