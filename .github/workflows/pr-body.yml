@@ -9,6 +9,13 @@ name: Plantilla del PR
 #
 # SEGURIDAD: la descripción entra por variable de entorno, nunca interpolada en el script, y el
 # comprobador no la imprime (una línea "::..." sería un comando del workflow).
+#
+# Dos jobs con los mismos pasos (anclas YAML) y la condición contraria; un job saltado no gasta minutos. En los repos
+# PRIVADOS de Cenit-Digital, el conmutador de KubernetesInfrastructure (kubernetes/ci-conmutador/) pone la variable de repo
+# CI_RUNNER=cenit-runners al pasar el 80 % del cupo de Actions: entonces corre `body-propio`, en los runners del servidor
+# de Cenit Digital (cenit-runners, ARC), y la comprobación no se pierde. Sin la variable (siempre en este repo público y
+# en cualquier derivado fuera de Cenit-Digital) corre `body`, en los runners de GitHub. El pod de trabajo de ARC no tiene
+# root y exige `container:`: el gemelo usa la imagen oficial de Node por digest, la misma que harness-ci.yml.
 
 on:
   pull_request:
@@ -24,17 +31,34 @@ concurrency:
 jobs:
   body:
     name: Cuerpo del PR
-    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' }}
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' && vars.CI_RUNNER != 'cenit-runners' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - &checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - &setup_node
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           # Sin caché automático: con "packageManager: pnpm" en el package.json del derivado, setup-node
           # lo activaría y fallaría porque pnpm aún no está instalado en este paso.
           package-manager-cache: false
-      - name: Comprobar la descripción del PR
+      - &comprobar
+        name: Comprobar la descripción del PR
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: node .harness/pr-body.mjs
+
+  body-propio:
+    name: Cuerpo del PR (runners propios)
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.type != 'Bot' && vars.CI_RUNNER == 'cenit-runners' }}
+    runs-on: cenit-runners
+    timeout-minutes: 10
+    container:
+      image: docker.io/library/node:22-bookworm@sha256:82693da96a4e38b8c0e2bf0c5df58fcb86d2d25e5a235c07748f09bfa38567c2
+    steps:
+      - *checkout
+      - *setup_node
+      - *comprobar
