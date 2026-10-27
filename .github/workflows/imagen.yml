@@ -66,7 +66,7 @@ jobs:
           { r actas.cli 2>&1 || true; } | grep -q "python -m actas.cli grabar"
           # Las migraciones van dentro del paquete instalado.
           docker run --rm --read-only --user 1000:1000 --entrypoint /opt/actas/venv/bin/python "$PRUEBA" -I -c \
-            "from actas import base; assert [n for n, _ in base._migraciones()] == ['0001_esquema.sql', '0002_panel.sql', '0003_salas.sql', '0005_eventos.sql']"
+            "from actas import base; assert [n for n, _ in base._migraciones()] == ['0001_esquema.sql', '0002_panel.sql', '0003_salas.sql', '0005_eventos.sql', '0006_programar.sql']"
           # El commit va dentro de la imagen, para el latido del supervisor (V4 de KubernetesInfrastructure#298).
           docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PRUEBA" | grep -qx "ACTAS_REVISION=$GITHUB_SHA"
           # Sin configuración, el supervisor falla al instante y sin trazas con secretos.
