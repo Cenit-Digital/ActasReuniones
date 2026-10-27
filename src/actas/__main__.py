@@ -72,6 +72,14 @@ class _GrabacionConCdp:
             self._g.cdp.cerrar()
 
 
+def nueva_grabacion(
+    cdp_url: str, sala: Sala | None, socios: tuple[str, ...], destino: Path, registro: Registro
+) -> _GrabacionConCdp:
+    """Sin sala (una grabación pedida antes de V2 que se retoma al arrancar), SALA_RESCATE: retomar y parar solo usan la base
+    de las URL, y Sala.url se niega a abrir una página sin room ni contraseña."""
+    return _GrabacionConCdp(cdp_url, sala or SALA_RESCATE, socios, destino, registro)
+
+
 def cerrar_paginas_de_vdo_ninja(cdp_url: str, registro: Registro) -> None:
     """Al arrancar, tras el rescate: cierra las páginas de VDO.Ninja que aún queden abiertas, de cualquier sala (seguirían
     grabando), y deniega las descargas hasta la próxima grabación."""
@@ -109,7 +117,7 @@ def main() -> None:
         repo=repo,
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
         sala_de=lambda r: sala_de_reunion(r, repo.cifrada_de_sala, maestra, registro),
-        nueva_grabacion=lambda sala, socios, destino: _GrabacionConCdp(cdp_url, sala or SALA_RESCATE, socios, destino, registro),
+        nueva_grabacion=lambda sala, socios, destino: nueva_grabacion(cdp_url, sala, socios, destino, registro),
         raiz=Path(e.get("ACTAS_GRABACIONES", "/grabaciones")),
         registro=registro,
         metricas=metricas,

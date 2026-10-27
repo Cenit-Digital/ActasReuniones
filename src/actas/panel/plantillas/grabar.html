@@ -25,7 +25,7 @@
 {% if salas %}
 <div class="opciones">
 {% for s in salas %}
-<label class="opcion"><input type="radio" name="sala" value="{{ s.id }}" required{% if loop.first %} checked{% endif %}> {{ s.nombre }} <span class="detalle">{% if s.ultima %}usada el {{ s.ultima.strftime("%Y-%m-%d") }} · {{ s.reuniones }} reuniones{% else %}sin usar{% endif %}</span></label>
+<label class="opcion"><input type="radio" name="sala" value="{{ s.id }}" required{% if salas | length == 1 %} checked{% endif %}> {{ s.nombre }} <span class="detalle">{% if s.ultima %}usada el {{ s.ultima.strftime("%Y-%m-%d") }} · {{ s.reuniones }} reuniones{% else %}sin usar{% endif %}</span></label>
 {% endfor %}
 </div>
 <p class="detalle">Los enlaces de los socios y la contraseña, en <a href="/salas">Salas y socios</a>. <a href="/salas/nueva">Crear sala nueva</a>.</p>

@@ -2,6 +2,7 @@
 asociado y la clave maestra del Secret `actas-salas-clave`."""
 
 import base64
+import math
 
 import pytest
 
@@ -61,6 +62,16 @@ def test_alfabetos_con_azar_suficiente():
     # 16 caracteres de 36 y de 31 símbolos: más de 78 bits cada uno.
     assert len(salas.ALFABETO_ROOM) == 36
     assert len(salas.ALFABETO_CLAVE) == 31
+    assert (salas.LARGO_ROOM, salas.LARGO_CLAVE) == (16, 16)
+    assert salas.LARGO_ROOM * math.log2(len(salas.ALFABETO_ROOM)) > 78
+    assert salas.LARGO_CLAVE * math.log2(len(salas.ALFABETO_CLAVE)) > 78
+
+
+def test_clave_maestra_con_caracteres_fuera_de_base64_no_vale():
+    # Sin `validate=True`, b64decode descartaría el «!» y daría igualmente 32 bytes.
+    texto = base64.b64encode(MAESTRA).decode()
+    with pytest.raises(salas.ClaveNoValida):
+        salas.clave_maestra(texto[:4] + "!" + texto[4:])
 
 
 def test_cifrar_y_descifrar():
@@ -110,9 +121,10 @@ def test_descifrar_alterado_falla():
         salas.descifrar(MAESTRA, "sala1", bytes(cifrada))
 
 
-def test_nonce_de_12_bytes():
+@pytest.mark.parametrize("largo", [11, 13])
+def test_nonce_de_12_bytes(largo):
     with pytest.raises(ValueError):
-        salas.cifrar(MAESTRA, "sala1", "x", nonce=bytes(11))
+        salas.cifrar(MAESTRA, "sala1", "x", nonce=bytes(largo))
 
 
 @pytest.mark.parametrize(("nombre", "esperado"), [("  Socios semanal ", "Socios semanal"), ("a", "a"), ("ñ" * 64, "ñ" * 64)])
