@@ -67,9 +67,22 @@ def test_enteros_booleanos_nulo_y_codigos(valor):
 
 
 def test_la_lista_blanca_es_la_de_la_migracion():
-    """La misma lista que impone el CHECK de 0005_eventos.sql: si una cambia, este test obliga a cambiar la otra."""
+    """La misma lista que impone el CHECK de 0005_eventos.sql (los tipos de V3, en la 0006): si una cambia, este test obliga a
+    cambiar la otra."""
     from pathlib import Path
 
     sql = (Path(__file__).resolve().parents[2] / "migraciones" / "0005_eventos.sql").read_text(encoding="utf-8")
-    for nombre in sorted(TIPOS | CLAVES):
+    for nombre in sorted((TIPOS - {"modificada", "papelera"}) | CLAVES):
         assert f"'{nombre}'" in sql, nombre
+
+
+def test_los_tipos_son_los_del_ultimo_check_de_la_base():
+    """La 0006 (V3) rehízo el CHECK de los tipos con `modificada` y `papelera`: el mismo conjunto, ni más ni menos."""
+    import re
+    from pathlib import Path
+
+    sql = (Path(__file__).resolve().parents[2] / "migraciones" / "0006_programar.sql").read_text(encoding="utf-8")
+    check = re.search(r"ADD CONSTRAINT eventos_tipo_check\s+CHECK \(tipo IN \(([^)]*)\)\)", sql)
+    assert check is not None
+    assert set(re.findall(r"'([a-z_]+)'", check.group(1))) == TIPOS
+    assert {"modificada", "papelera"} <= TIPOS

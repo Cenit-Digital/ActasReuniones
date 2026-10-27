@@ -32,3 +32,8 @@ def test_audio_sin_reunion_conocida_es_huerfano():
 
 def test_transcrita_y_vieja_cuenta_como_transcrita():
     assert a_borrar([Audio("r", "transcrita", AHORA - PLAZO_AUDIO_S - 5)], AHORA) == [("r", "transcrita")]
+
+
+def test_se_borra_el_audio_de_una_reunion_cancelada():
+    """V3: no entró nadie y el supervisor no llegó a borrarlo (o falló al hacerlo): la purga de cada hora lo hace."""
+    assert a_borrar([Audio("r1", "cancelada", AHORA - 60)], AHORA) == [("r1", "nadie_entro")]

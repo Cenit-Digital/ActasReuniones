@@ -9,6 +9,7 @@ import re
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from actas import eventos
 from actas.conformidad import Peticion
 from actas.estados import Estado, TransicionNoValida, transicion
 from actas.formulario import Socio
+from actas.planificador import Programacion
 
 _ESQUEMA = re.compile(r"[a-z][a-z0-9_]{0,30}")
 MIGRACIONES = Path(__file__).resolve().parent / "migraciones"
@@ -91,13 +93,22 @@ class Repositorio:
         finally:
             c.close()
 
-    def pedir(self, peticion: Peticion, pedido_por: str | None = None, sala_id: str | None = None) -> str:
+    def pedir(
+        self,
+        peticion: Peticion,
+        pedido_por: str | None = None,
+        sala_id: str | None = None,
+        titulo: str | None = None,
+        tope_min: int = 180,
+    ) -> str:
         """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2).
-        `sala_id`: la sala en la que se graba (V2); sin ella, el supervisor no la graba."""
+        `sala_id`: la sala en la que se graba (V2); sin ella, el supervisor no la graba. `titulo` y `tope_min`: los de
+        «Grabar ahora» (V3)."""
         with self.conexion() as c:
             fila = c.execute(
-                "INSERT INTO reuniones (socios, texto_version, pedido_por, sala_id) VALUES (%s, %s, %s, %s) RETURNING id",
-                (list(peticion.socios), peticion.version, pedido_por, sala_id),
+                "INSERT INTO reuniones (socios, texto_version, pedido_por, sala_id, titulo, tope_min) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (list(peticion.socios), peticion.version, pedido_por, sala_id, titulo, tope_min),
             ).fetchone()
             assert fila is not None
             rid = str(fila[0])
@@ -311,17 +322,20 @@ class Repositorio:
         """Las últimas reuniones, de la más nueva a la más vieja (lista del panel)."""
         with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
             filas = cur.execute(
-                "SELECT id, creado_en, inicio, fin, estado, motivo, socios, pedido_por FROM reuniones "
-                "ORDER BY creado_en DESC, id DESC LIMIT %s",
+                "SELECT id, creado_en, inicio, fin, estado, motivo, socios, pedido_por, titulo, programada_para, tope_min, "
+                "repetir FROM reuniones WHERE papelera_en IS NULL ORDER BY creado_en DESC, id DESC LIMIT %s",
                 (limite,),
             ).fetchall()
         return [_fila(f) for f in filas]
 
     def reunion_de_trabajo(self, trabajo_id: str) -> str | None:
-        """La reunión que envió ese trabajo a transcribir (enlace de vuelta de su web, @a62); la más nueva si hubiera varias."""
+        """La reunión que envió ese trabajo a transcribir (enlace de vuelta de su web, @a62); la más nueva si hubiera varias.
+        Nunca una de la papelera."""
         with self.conexion() as c:
             fila = c.execute(
-                "SELECT id::text FROM reuniones WHERE trabajo_id = %s ORDER BY creado_en DESC, id DESC LIMIT 1", (trabajo_id,)
+                "SELECT id::text FROM reuniones WHERE trabajo_id = %s AND papelera_en IS NULL "
+                "ORDER BY creado_en DESC, id DESC LIMIT 1",
+                (trabajo_id,),
             ).fetchone()
         return fila[0] if fila else None
 
@@ -355,7 +369,7 @@ class Repositorio:
                         hallados AS (
                             SELECT s.reunion_id, r.creado_en, s.hablante, s.inicio_ms, s.texto
                             FROM segmentos s JOIN reuniones r ON r.id = s.reunion_id, q
-                            WHERE s.tsv @@ q.q
+                            WHERE s.tsv @@ q.q AND r.papelera_en IS NULL
                             ORDER BY r.creado_en DESC, s.reunion_id, s.inicio_ms, s.id
                             LIMIT %(limite)s)
                    SELECT h.reunion_id, h.creado_en, h.hablante, h.inicio_ms,
@@ -459,6 +473,100 @@ class Repositorio:
         with self.conexion() as c:
             fila = c.execute("SELECT socio_activo(%s, %s)", (push, activo)).fetchone()
         return bool(fila and fila[0])
+
+    # ── Programar, modificar, cancelar, papelera y purga (V3 de KubernetesInfrastructure#298, migración 0006) ──────────────
+
+    def programar(self, p: Programacion, usuario: str) -> str:
+        """La reunión `programada` y una conformidad por socio, por la función `programar` (el panel no inserta el estado)."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "SELECT programar(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (p.titulo, p.sala_id, p.para, p.tope_min, p.repetir, p.espera_min, list(p.socios), p.version, usuario),
+            ).fetchone()
+        assert fila is not None
+        return str(fila[0])
+
+    def modificar_programada(self, rid: str, p: Programacion, usuario: str) -> bool | None:
+        """@a49: false si ya no está programada; None si no existe."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "SELECT modificar_programada(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (rid, p.titulo, p.sala_id, p.para, p.tope_min, p.repetir, p.espera_min, list(p.socios), p.version, usuario),
+            ).fetchone()
+        return fila[0] if fila else None
+
+    def cancelar(self, rid: str, usuario: str, serie: bool = False) -> bool | None:
+        """@a50: programada → cancelada, sin borrar nada. `serie`: tampoco se crea la siguiente."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT cancelar_reunion(%s, %s, %s)", (rid, usuario, serie)).fetchone()
+        return fila[0] if fila else None
+
+    def a_papelera(self, rid: str, usuario: str) -> bool | None:
+        """«Eliminar» (@a51): solo una reunión terminada; se borra de verdad a los 7 días (`purgar_actas`)."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT a_papelera(%s, %s)", (rid, usuario)).fetchone()
+        return fila[0] if fila else None
+
+    def recuperar(self, rid: str, usuario: str) -> bool | None:
+        with self.conexion() as c:
+            fila = c.execute("SELECT recuperar(%s, %s)", (rid, usuario)).fetchone()
+        return fila[0] if fila else None
+
+    def purgar_actas(self) -> int:
+        """@a51 y @a52: lo de más de 7 días en la papelera y lo terminado hace más de 12 meses. Cuántas reuniones borró."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT purgar_actas()").fetchone()
+        return int(fila[0]) if fila else 0
+
+    def programadas(self) -> list[dict[str, Any]]:
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute("SELECT * FROM reuniones WHERE estado = 'programada' ORDER BY programada_para, id").fetchall()
+        return [_fila(f) for f in filas]
+
+    def papelera(self) -> list[dict[str, Any]]:
+        """Lo que está en la papelera, con cuándo se borra de verdad (el reloj de la base)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT id, titulo, creado_en, inicio, fin, estado, papelera_en, papelera_por, "
+                "papelera_en + interval '7 days' AS borrado_en FROM reuniones WHERE papelera_en IS NOT NULL "
+                "ORDER BY papelera_en DESC, id"
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def vencidas(self) -> list[dict[str, Any]]:
+        """@a48: las programadas cuya hora ya llegó, con su retraso en segundos según el reloj de la base."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT *, extract(epoch FROM now() - programada_para)::float8 AS retraso_s FROM reuniones "
+                "WHERE estado = 'programada' AND programada_para <= now() ORDER BY programada_para, id"
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def series_pendientes(self) -> list[dict[str, Any]]:
+        """@a53: las reuniones de una serie que ya salieron de `programada` y aún no tienen su siguiente."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT * FROM reuniones WHERE repetir <> 'no' AND estado <> 'programada' AND repetida_en IS NULL "
+                "AND programada_para IS NOT NULL ORDER BY programada_para, id"
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def crear_siguiente(self, r: Mapping[str, Any], para: datetime) -> str | None:
+        """@a53: la siguiente de la serie, `programada` a `para`, con la misma sala, tope, espera y socios, y sin conformidades
+        (se piden de nuevo). Una sola vez: None si ya se creó."""
+        with self.conexion() as c:
+            fila = c.execute(
+                """INSERT INTO reuniones (estado, titulo, sala_id, programada_para, tope_min, repetir, repetir_dia, espera_min,
+                                          socios, texto_version, pedido_por, anterior_id)
+                   SELECT 'programada', titulo, sala_id, %s, tope_min, repetir, repetir_dia, espera_min, socios, texto_version,
+                          pedido_por, id
+                   FROM reuniones WHERE id = %s AND repetir <> 'no' AND repetida_en IS NULL
+                   ON CONFLICT (anterior_id) DO NOTHING
+                   RETURNING id::text""",
+                (para, r["id"]),
+            ).fetchone()
+            c.execute("UPDATE reuniones SET repetida_en = now() WHERE id = %s AND repetida_en IS NULL", (r["id"],))
+        return fila[0] if fila else None
 
     def cuenta_por_estado(self) -> dict[str, int]:
         with self.conexion() as c:

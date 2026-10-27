@@ -855,3 +855,249 @@ def test_un_reintento_que_falla_no_para_la_vuelta(entorno, repo_panel, monkeypat
     assert _historial(repo, rid)[-1] == ("reintento", {"usuario": "pablo", "resultado": "interno"})
     assert repo.reunion(otra)["estado"] == "grabando"
     assert repo.latido() is not None
+
+
+# ── V3: programadas (@a48), su tope y su espera, la serie (@a53) y la purga diaria (@a51, @a52) ─────────────────────────
+
+
+def _programada(repo, **cambios):
+    from datetime import UTC, datetime, timedelta
+
+    from actas.planificador import Programacion
+
+    sala = cambios.pop("sala_id", None) or repo.crear_sala(
+        f"s{len(repo.salas())}", f"room{len(repo.salas())}", "abcd", b"\x00" * 40, "pablo"
+    )
+    datos = {
+        "titulo": "Socios",
+        "sala_id": sala,
+        "para": datetime.now(UTC) + timedelta(days=1),
+        "tope_min": 120,
+        "repetir": "no",
+        "espera_min": 15,
+        "socios": ("socioa", "sociob"),
+        "version": "v1",
+    }
+    datos.update(cambios)
+    return repo.programar(Programacion(**datos), "pablo")
+
+
+def _vence(repo, rid, hace="1 second"):
+    """Su hora llega: la base decide (now()), no el reloj del supervisor."""
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET programada_para = now() - %s::interval WHERE id = %s", (hace, rid))
+
+
+def test_a48_a_su_hora_pasa_a_grabando_en_la_siguiente_vuelta(entorno):
+    sup, repo, *_ = entorno
+    rid = _programada(repo)
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "programada" and GrabacionFalsa.creadas == []
+    _vence(repo, rid)
+    sup.paso()  # una vuelta: cada 5 s, así que ≤ 10 s
+    r = repo.reunion(rid)
+    assert r["estado"] == "grabando" and r["inicio"] is not None
+    assert GrabacionFalsa.creadas[0].socios == ("socioa", "sociob") and GrabacionFalsa.creadas[0].empezada
+    assert repo.eventos(rid)[-1]["detalle"] == {"desde": "programada", "hasta": "grabando", "socios": 2}
+
+
+def test_a48_sin_la_conformidad_de_todos_pasa_a_error(entorno):
+    sup, repo, *_ = entorno
+    rid = _programada(repo)
+    with repo.conexion() as c:
+        c.execute("DELETE FROM conformidades WHERE reunion_id = %s AND socio = 'sociob'", (rid,))
+    _vence(repo, rid)
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["motivo"]) == ("error", "conformidad") and GrabacionFalsa.creadas == []
+    assert repo.eventos(rid)[-1]["detalle"] == {"desde": "programada", "hasta": "error", "motivo": "conformidad"}
+
+
+def test_a48_una_pedida_va_antes_que_una_programada(entorno):
+    sup, repo, *_ = entorno
+    prog = _programada(repo)
+    _vence(repo, prog)
+    pedida = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    assert (repo.reunion(pedida)["estado"], repo.reunion(prog)["estado"]) == ("grabando", "programada")
+
+
+def test_a48_con_otra_grabacion_en_marcha_espera_y_empieza_al_acabar(entorno):
+    sup, repo, plataforma, *_ = entorno
+    plataforma.respuesta_crear = (503, None)
+    pedida = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    prog = _programada(repo)
+    _vence(repo, prog, "5 minutes")
+    sup.paso()
+    assert repo.reunion(prog)["estado"] == "programada"
+    repo.pedir_parada()
+    sup.paso()  # para la primera
+    sup.paso()  # y empieza la programada, aún dentro de su espera
+    assert (repo.reunion(pedida)["estado"], repo.reunion(prog)["estado"]) == ("grabada", "grabando")
+
+
+def test_a48_pasada_su_espera_sin_poder_empezar_pasa_a_error(entorno):
+    sup, repo, *_ = entorno
+    repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()  # otra grabación en marcha
+    prog = _programada(repo, espera_min=15)
+    _vence(repo, prog, "15 minutes 1 second")
+    sup.paso()
+    r = repo.reunion(prog)
+    assert (r["estado"], r["motivo"]) == ("error", "no_empezo")
+
+
+def test_a48_si_el_supervisor_estuvo_parado_no_graba_tarde(entorno):
+    sup, repo, *_ = entorno
+    prog = _programada(repo, espera_min=30)
+    _vence(repo, prog, "2 hours")
+    sup.paso()
+    assert repo.reunion(prog)["estado"] == "error" and GrabacionFalsa.creadas == []
+
+
+def test_el_tope_de_cada_reunion(entorno):
+    sup, repo, plataforma, _, reloj, _ = entorno
+    plataforma.respuesta_crear = (503, None)
+    rid = _programada(repo, tope_min=60)
+    _vence(repo, rid)
+    sup.paso()
+    reloj.t += 3599
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabando"
+    reloj.t += 1
+    sup.paso()
+    assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "tope")
+
+
+def test_grabar_ahora_con_su_tope(entorno):
+    sup, repo, plataforma, _, reloj, _ = entorno
+    plataforma.respuesta_crear = (503, None)
+    rid = repo.pedir(Peticion(("socioa",), "v1"), tope_min=60)
+    sup.paso()
+    reloj.t += 3600
+    sup.paso()
+    assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "tope")
+
+
+def test_si_no_entra_nadie_se_cancela_y_se_borra_el_audio(entorno):
+    sup, repo, _, metricas, reloj, raiz = entorno
+    rid = _programada(repo, espera_min=15)
+    _vence(repo, rid)
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+    g.ver = {"socioa": [], "sociob": []}
+    for _ in range(14):
+        reloj.t += 60
+        sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabando"
+    reloj.t += 60
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["motivo"]) == ("cancelada", "nadie_entro") and r["fin"] is not None
+    assert g.parada and not (raiz / rid).exists() and metricas.grabando == 0
+    with repo.conexion() as c:
+        assert c.execute("SELECT motivo FROM purgas WHERE reunion_id = %s", (rid,)).fetchall() == [("nadie_entro",)]
+    assert {"desde": "grabando", "hasta": "cancelada", "motivo": "nadie_entro"} in [e["detalle"] for e in repo.eventos(rid)]
+
+
+def test_si_entro_alguien_no_se_cancela_aunque_luego_salga(entorno):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = _programada(repo, espera_min=15)
+    _vence(repo, rid)
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+    g.ver = {"socioa": ["socioa"], "sociob": []}
+    reloj.t += 60
+    sup.paso()
+    g.ver = {"socioa": [], "sociob": []}
+    for _ in range(30):
+        reloj.t += 60
+        sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabando"
+
+
+def test_grabar_ahora_no_se_cancela_aunque_no_entre_nadie(entorno):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    GrabacionFalsa.creadas[0].ver = {"socioa": []}
+    for _ in range(61):
+        reloj.t += 60
+        sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabando"
+
+
+def test_a53_al_empezar_una_semanal_se_crea_la_siguiente_sin_conformidades(entorno):
+    from datetime import timedelta
+
+    from actas.planificador import MADRID
+
+    sup, repo, *_ = entorno
+    rid = _programada(repo, repetir="semanal", tope_min=60, espera_min=30)
+    _vence(repo, rid, "1 minute")
+    sup.paso()
+    r = repo.reunion(rid)
+    assert r["estado"] == "grabando" and r["repetida_en"] is not None
+    (sig,) = repo.programadas()
+    assert (sig["anterior_id"], sig["sala_id"], sig["tope_min"], sig["espera_min"], list(sig["socios"])) == (
+        rid,
+        r["sala_id"],
+        60,
+        30,
+        ["socioa", "sociob"],
+    )
+    local = r["programada_para"].astimezone(MADRID)
+    assert sig["programada_para"].astimezone(MADRID) == local + timedelta(days=7)
+    assert repo.conformidades(sig["id"]) == []
+    sup.paso()
+    assert len(repo.programadas()) == 1  # una sola
+
+
+def test_a53_tambien_si_no_pudo_empezar(entorno):
+    sup, repo, *_ = entorno
+    rid = _programada(repo, repetir="mensual")
+    with repo.conexion() as c:
+        c.execute("DELETE FROM conformidades WHERE reunion_id = %s", (rid,))
+    _vence(repo, rid)
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "error"
+    (sig,) = repo.programadas()
+    assert sig["anterior_id"] == rid and sig["repetir"] == "mensual"
+
+
+def test_a53_la_siguiente_sin_conformidades_no_graba(entorno):
+    sup, repo, *_ = entorno
+    rid = _programada(repo, repetir="semanal")
+    _vence(repo, rid)
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    (sig,) = repo.programadas()
+    _vence(repo, sig["id"])
+    sup.paso()
+    assert (repo.reunion(sig["id"])["estado"], repo.reunion(sig["id"])["motivo"]) == ("error", "conformidad")
+
+
+def test_la_purga_de_actas_corre_al_arrancar_y_una_vez_al_dia(entorno, repo_panel):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.ERROR, motivo="conformidad")
+    repo_panel.a_papelera(rid, "pablo")
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET papelera_en = now() - interval '8 days' WHERE id = %s", (rid,))
+    otra = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(otra, Estado.PEDIDA, Estado.ERROR, motivo="conformidad")
+    sup.paso()
+    with pytest.raises(KeyError):
+        repo.reunion(rid)
+    repo_panel.a_papelera(otra, "pablo")
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET papelera_en = now() - interval '8 days' WHERE id = %s", (otra,))
+    reloj.t += 23 * 3600
+    sup.paso()
+    assert repo.reunion(otra)["papelera_en"] is not None  # aún no ha pasado un día
+    reloj.t += 3600
+    sup.paso()
+    with pytest.raises(KeyError):
+        repo.reunion(otra)
