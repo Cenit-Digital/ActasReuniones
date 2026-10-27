@@ -7,6 +7,10 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
   Secret `actas-salas-clave` (`salas`); enseña el enlace de cada socio sin la contraseña (`enlaces`, @a44); y la contraseña
   solo tras confirmarlo con un POST, que la base anota como `clave_vista` antes de dar el valor cifrado (@a45). Da de alta y de
   baja socios (@a47). La base no deja al panel leer la contraseña cifrada de otra forma ni cambiar nada (sin UPDATE).
+- «Reintentar» de una reunión en error (V4, migración 0005): solo por la función `pedir_reintento` (SECURITY DEFINER).
+- Diagnóstico (V4 de KubernetesInfrastructure#298, ADR 0023 decisión 7): el motivo en lenguaje claro (`diagnostico.py`), el
+  historial de eventos y las comprobaciones del latido, todo desde la base. Los registros crudos de los pods, en la consola:
+  el panel no tiene permisos sobre Kubernetes.
 - Quién pulsa: la cabecera `X-Actas-Usuario`, que pone el Middleware `basicauth` de Traefik (`headerField`, con `removeHeader`
   para que la contraseña no llegue aquí). Solo se cree si además llega `X-Actas-Proxy` con el secreto que añade otro middleware
   de la misma ruta (el patrón de la consola): la NetworkPolicy no es la única barrera. Sin las dos, 401 y nada se escribe.
@@ -25,6 +29,7 @@ el de `busqueda.resaltar`.
 
 import functools
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +45,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from actas import busqueda, enlaces, presentacion, salas
+from actas import busqueda, diagnostico, enlaces, presentacion, salas
 from actas.base import Repositorio, es_uuid
 from actas.conformidad import ConformidadNoValida
 from actas.formulario import FormularioNoValido, usuario, validar_grabar, validar_socio, version_de_fichero
@@ -54,6 +59,11 @@ CABECERA_PROXY = "x-actas-proxy"
 # La ficha del trabajo en transcribir: su web enruta por hash, `#/trabajos/<id>` (PlataformaParaTranscribirAudios,
 # web/src/lib/ruta.ts, `enlace('editor', id)`).
 TRANSCRIBIR = "https://transcribir.cenitdigital.es"
+# Los registros de los pods de `actas` en la consola: su web enruta `#/cargas/<espacio>` a «Cargas de trabajo» con ese espacio
+# (PlataformaWebObservabilidadInfra, apps/web/src/interfaz/rutas.ts y App.tsx, `espacioInicial`), con «logs» por pod.
+CONSOLA = "https://consola.cenitdigital.es/#/cargas/actas"
+# El glifo de cada nivel del historial y de las comprobaciones (el texto va siempre al lado).
+GLIFO_NIVEL = {"ok": "visto", "aviso": "medio", "error": "cruz", "info": "espera"}
 # Referrer-Policy `same-origin`, en la cabecera y en el <meta> de base.html, y nunca `no-referrer`: Fetch Standard, «append a
 # request `Origin` header», para un POST que no es CORS (un <form method="post"> es "navigate") «switch on request's referrer
 # policy: "no-referrer": Set serializedOrigin to `null`», y `origen.permitido` rechaza `Origin: null` (@a31): era el 403 de
@@ -193,6 +203,63 @@ class _Guardia:
         return None
 
 
+def _hora(m: datetime) -> str:
+    return m.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _diagnostico(r: Mapping[str, Any], datos: Mapping[str, Any]) -> dict[str, Any]:
+    """Historial de la reunión (sus eventos más lo que dicen sus columnas) y, si está en error, su diagnóstico (@a56) y si se
+    ofrece «Reintentar» (@a57): solo con un motivo que se arregle reenviando, el latido fresco y el audio aún en el tmpfs."""
+    eventos = datos["eventos"]
+    lineas: list[tuple[datetime, str, str]] = [(r["creado_en"], f"Pedida por {r.get('pedido_por') or 'actas.sh'}", "info")]
+    if r.get("parar_pedido_en"):
+        lineas.append((r["parar_pedido_en"], "Parada pedida", "info"))
+    if r.get("reintento_pedido_en"):
+        lineas.append((r["reintento_pedido_en"], f"Reintento pedido por {r.get('reintento_pedido_por')}: pendiente", "info"))
+    for e in eventos:
+        lineas.append((e["momento"], *diagnostico.linea_evento(e["tipo"], e["detalle"])))
+    if not eventos:  # una reunión anterior a V4: lo que se sabe por sus columnas
+        if r.get("inicio"):
+            lineas.append((r["inicio"], "Empezó a grabar", "info"))
+        if r.get("fin"):
+            lineas.append((r["fin"], "Terminó la grabación", "info"))
+    lineas.sort(key=lambda x: x[0])
+    contexto: dict[str, Any] = {
+        "historial": [(_hora(m), texto, nivel, GLIFO_NIVEL[nivel]) for m, texto, nivel in lineas],
+        "sin_eventos": not eventos,
+        "diagnostico": None,
+    }
+    if r["estado"] != "error":
+        return contexto
+    inicio, fin, parada = r.get("inicio"), r.get("fin"), r.get("parar_pedido_en")
+    a_error = [e["detalle"] for e in eventos if e["tipo"] == "estado" and e["detalle"].get("hasta") == "error"]
+    d = diagnostico.diagnosticar(
+        r.get("motivo"),
+        duracion_s=(fin - inicio).total_seconds() if inicio and fin else None,
+        parada_s=(parada - inicio).total_seconds() if inicio and parada else None,
+        causa=a_error[-1].get("causa") if a_error else None,
+        con_historial=bool(eventos),
+    )
+    latido, hace_s = datos["latido"], datos["latido_hace_s"]
+    vivo = hace_s is not None and hace_s < diagnostico.LATIDO_MAX_S
+    con_audio = latido is not None and r["id"] in (latido.get("con_audio") or [])
+    nota = ""
+    if d.reintentable and r.get("reintento_pedido_en"):
+        nota = "Reintento pedido: el supervisor lo atiende en su próxima vuelta (cada 5 s)."
+    elif d.reintentable and not vivo:
+        nota = "El supervisor no da señales de vida: «Reintentar» se ofrecerá de nuevo cuando las dé."
+    elif d.reintentable and not con_audio:
+        nota = "El audio de esta reunión ya no está en el supervisor (se borra como mucho a los 7 días): no se puede reintentar."
+    contexto["diagnostico"] = d
+    contexto["reintentar"] = d.reintentable and vivo and con_audio and not r.get("reintento_pedido_en")
+    contexto["nota"] = nota
+    contexto["comprobaciones"] = [
+        (texto, nivel, GLIFO_NIVEL[nivel])
+        for texto, nivel in diagnostico.comprobaciones(latido, hace_s, datos["fallos_transcribir_1h"])
+    ]
+    return contexto
+
+
 def crear_app(
     repo: Repositorio,
     maestra: bytes,
@@ -299,8 +366,22 @@ def crear_app(
             ],
             "transcribir": f"{TRANSCRIBIR}/#/trabajos/{r['trabajo_id']}" if r.get("trabajo_id") else None,
             "sala": sala,
+            "consola": CONSOLA,
+            **_diagnostico(r, await en_hilo(repo.diagnostico, rid)),
         }
         return pagina(peticion, "reunion.html", contexto)
+
+    async def reintentar(peticion: Request) -> Response:
+        """@a57: solo anota la petición; el supervisor la atiende en su próxima vuelta si el audio sigue en el tmpfs."""
+        rid = peticion.path_params["rid"]
+        if not es_uuid(rid):
+            raise HTTPException(404)
+        pedido = await en_hilo(repo.pedir_reintento, rid, peticion.headers[CABECERA_USUARIO])
+        if pedido is None:
+            raise HTTPException(404)
+        if not pedido:
+            return mensaje(peticion, "Esa reunión no está en error o ya tiene un reintento pedido.", 409)
+        return RedirectResponse(f"/reuniones/{rid}#diagnostico", status_code=303)
 
     async def de_trabajo(peticion: Request) -> Response:
         """El enlace de vuelta de transcribir (@a62): su web solo sabe el id del trabajo (PlataformaParaTranscribirAudios#19)."""
@@ -461,6 +542,7 @@ def crear_app(
         Route("/", lista),
         Route("/reuniones", de_trabajo),
         Route("/reuniones/{rid}", reunion),
+        Route("/reuniones/{rid}/reintentar", reintentar, methods=["POST"]),
         Route("/buscar", buscar),
         Route("/grabar", ver_grabar, methods=["GET"]),
         Route("/grabar", grabar, methods=["POST"]),

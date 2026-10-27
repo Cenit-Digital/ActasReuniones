@@ -111,6 +111,7 @@ def test_sin_privilegios_de_tabla_que_anulen_los_de_columna(repo, dsn):
             "ORDER BY 1",
             (esquema,),
         ).fetchall()
+    # V4 no añade ninguno: «Reintentar» va por la función pedir_reintento (lo exige @a33 de actas-gate.sh f2).
     assert columnas == [("actualizado_en",), ("parar_pedido_en",)]
 
 

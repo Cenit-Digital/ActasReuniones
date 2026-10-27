@@ -545,8 +545,11 @@ td .detalle {
   align-items: flex-start;
   gap: 20px;
 }
-.transcripcion {
+.principal {
+  display: flex;
   flex: 999 1 560px;
+  flex-direction: column;
+  gap: 20px;
   min-width: 0;
 }
 .lateral {
@@ -642,6 +645,80 @@ td .detalle {
 .conformidades .glifo {
   margin-right: 6px;
   color: var(--estado-en-linea);
+}
+
+/* ── Diagnóstico, historial y comprobaciones (V4) ───────────────────────────────────────────────────────────────────── */
+.diagnostico {
+  flex-wrap: wrap;
+}
+.diagnostico-texto {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.diagnostico .diagnostico-texto p + p {
+  margin-top: 8px;
+}
+.diagnostico-motivo {
+  color: var(--error);
+  font-weight: 700;
+}
+.eventos,
+.comprobaciones {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.eventos li {
+  display: grid;
+  grid-template-columns: auto 16px 1fr;
+  gap: 4px 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.eventos li:last-child {
+  border-bottom: 0;
+}
+.eventos time {
+  color: var(--muted);
+  font-size: 13px;
+}
+.eventos .glifo,
+.comprobaciones .glifo {
+  margin-top: 3px;
+}
+.comprobaciones {
+  gap: 10px;
+}
+.comprobaciones li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.historial .detalle {
+  margin: 12px 0 0;
+}
+.nivel-ok .glifo {
+  color: var(--estado-en-linea);
+}
+.nivel-aviso .glifo {
+  color: var(--aviso);
+}
+.nivel-error .glifo {
+  color: var(--error);
+}
+.nivel-info .glifo {
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .eventos li {
+    grid-template-columns: 16px 1fr;
+  }
+  .eventos time {
+    grid-column: 1 / -1;
+  }
 }
 
 /* ── Búsqueda ────────────────────────────────────────────────────────────────────────────────────────────────────────── */

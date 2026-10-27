@@ -39,6 +39,11 @@ def _version(base: str) -> dict[str, Any]:
     return datos
 
 
+def version_chromium(base: str) -> str:
+    """El campo `Browser` de /json/version (p. ej., `HeadlessChrome/141.0.7390.37`) para el latido. Lanza si no responde."""
+    return str(_version(base).get("Browser", ""))
+
+
 def esperar_chromium(base: str, plazo_s: float = 300, intervalo_s: float = 5) -> None:
     """Al arrancar el pod, Chromium puede tardar: hasta que responde no se puede rescatar ni cerrar ninguna página."""
     limite = time.monotonic() + plazo_s

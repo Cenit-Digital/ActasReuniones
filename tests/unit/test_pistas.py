@@ -69,3 +69,20 @@ def test_marca_igual_para_dos_socios_desfase_cero_en_los_dos():
 def test_nombres_que_no_son_pistas(nombre):
     with pytest.raises(PistasNoValidas):
         pistas_de([nombre], ["socioa"])
+
+
+@pytest.mark.parametrize(
+    ("ficheros", "causa"),
+    [
+        ([], "ninguna_pista"),
+        (["sociopablo_1000.webm_2"], "partida"),
+        (["notas.txt"], "no_grabacion"),
+        (["intruso_1000.webm"], "no_conforme"),
+        ([f"sociopablo_{1000 + i}.webm" for i in range(17)], "demasiadas"),
+    ],
+)
+def test_cada_rechazo_lleva_su_causa_para_el_historial(ficheros, causa):
+    """V4 de KubernetesInfrastructure#298: el código que explica el error en el panel (diagnostico.py)."""
+    with pytest.raises(PistasNoValidas) as e:
+        pistas_de(ficheros, ["sociopablo"])
+    assert e.value.causa == causa

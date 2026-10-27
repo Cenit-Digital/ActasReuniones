@@ -17,7 +17,12 @@ _TEMPORAL = (".crdownload",)
 
 
 class PistasNoValidas(ValueError):
-    """Los ficheros de la reunión no se pueden enviar tal cual: la reunión pasa a `error` y el audio se conserva."""
+    """Los ficheros de la reunión no se pueden enviar tal cual: la reunión pasa a `error` y el audio se conserva. `causa`: el
+    código que va al historial (eventos.py), para explicar el error en el panel sin el nombre de ningún fichero."""
+
+    def __init__(self, mensaje: str, causa: str) -> None:
+        super().__init__(mensaje)
+        self.causa = causa
 
 
 @dataclass(frozen=True)
@@ -35,17 +40,17 @@ def pistas_de(ficheros: list[str], conformes: list[str]) -> list[Pista]:
         if nombre.endswith(_TEMPORAL) or nombre.startswith(".") or nombre.endswith((".json", ".jsonl")):
             continue
         if _PARTIDA.fullmatch(nombre):
-            raise PistasNoValidas("grabación partida por VDO.Ninja: su marca no es la del trozo")
+            raise PistasNoValidas("grabación partida por VDO.Ninja: su marca no es la del trozo", "partida")
         m = _GRABACION.fullmatch(nombre)
         if m is None:
-            raise PistasNoValidas("fichero que no es una grabación")
+            raise PistasNoValidas("fichero que no es una grabación", "no_grabacion")
         if m["socio"] not in conformes:
-            raise PistasNoValidas("pista de un socio no conforme")
+            raise PistasNoValidas("pista de un socio no conforme", "no_conforme")
         encontradas.append((int(m["ms"]), m["socio"], nombre))
     if not encontradas:
-        raise PistasNoValidas("ninguna pista")
+        raise PistasNoValidas("ninguna pista", "ninguna_pista")
     if len(encontradas) > TOPE_PISTAS:
-        raise PistasNoValidas(f"{len(encontradas)} pistas, más que las {TOPE_PISTAS} que admite la plataforma")
+        raise PistasNoValidas(f"{len(encontradas)} pistas, más que las {TOPE_PISTAS} que admite la plataforma", "demasiadas")
     encontradas.sort()
     origen = encontradas[0][0]
     return [Pista(nombre, socio, ms, ms - origen) for ms, socio, nombre in encontradas]

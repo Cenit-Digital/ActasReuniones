@@ -16,16 +16,23 @@
 {% endif %}
 </div>
 </div>
-{% if r.estado == "error" %}
-<section class="aviso aviso-error" id="diagnostico" aria-labelledby="t-diagnostico">
+{% if diagnostico %}
+<section class="aviso aviso-error diagnostico" id="diagnostico" aria-labelledby="t-diagnostico">
 {{ glifo("cruz") }}
-<div>
-<h2 id="t-diagnostico">Diagnóstico</h2>
-<p>La reunión está en error: <span class="mono">{{ r.motivo or "sin motivo anotado" }}</span>.</p>
+<div class="diagnostico-texto">
+<p class="diagnostico-motivo">Error · <span class="mono">{{ r.motivo or "sin motivo" }}</span></p>
+<h2 id="t-diagnostico">{{ diagnostico.titulo }}</h2>
+<p><strong>Qué pasó:</strong> {{ diagnostico.que_paso }}</p>
+<p><strong>Qué hacer:</strong> {{ diagnostico.que_hacer }}</p>
+{% if nota %}<p class="detalle">{{ nota }}</p>{% endif %}
 </div>
+{% if reintentar %}
+<form method="post" action="/reuniones/{{ r.id }}/reintentar"><button class="boton boton-primario" type="submit">Reintentar</button></form>
+{% endif %}
 </section>
 {% endif %}
 <div class="columnas">
+<div class="principal">
 <section class="tarjeta transcripcion" aria-labelledby="t-transcripcion">
 <h2 id="t-transcripcion">Transcripción</h2>
 {% if segmentos %}
@@ -38,7 +45,28 @@
 <p class="vacio">Aún no hay transcripción.</p>
 {% endif %}
 </section>
+<section class="tarjeta historial" aria-labelledby="t-historial">
+<h2 id="t-historial">Historial</h2>
+<ol class="eventos">
+{% for hora, texto, nivel, g in historial %}
+<li class="nivel-{{ nivel }}"><time class="mono">{{ hora }}</time>{{ glifo(g) }}<span>{{ texto }}</span></li>
+{% endfor %}
+</ol>
+{% if sin_eventos %}<p class="detalle">Esta reunión es anterior al historial de eventos: solo constan sus horas.</p>{% endif %}
+<p class="detalle">Los registros del supervisor nunca llevan contraseñas ni texto de la reunión. Los crudos, en la <a href="{{ consola }}" rel="noopener noreferrer">consola<span aria-hidden="true"> ↗</span></a>.</p>
+</section>
+</div>
 <aside class="lateral">
+{% if diagnostico %}
+<section class="tarjeta" aria-labelledby="t-comprobaciones">
+<h2 id="t-comprobaciones">Comprobaciones</h2>
+<ul class="comprobaciones">
+{% for texto, nivel, g in comprobaciones %}
+<li class="nivel-{{ nivel }}">{{ glifo(g) }}<span>{{ texto }}</span></li>
+{% endfor %}
+</ul>
+</section>
+{% endif %}
 <section class="tarjeta" aria-labelledby="t-datos">
 <h2 id="t-datos">Datos</h2>
 <dl class="datos">

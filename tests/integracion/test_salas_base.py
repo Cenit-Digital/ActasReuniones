@@ -24,7 +24,7 @@ def _sala(repo, nombre="Socios semanal", usuario="pablo"):
 
 def test_migrar_aplica_la_0003(dsn):
     url, esquema = dsn
-    assert base.migrar(url, esquema) == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql"]
+    assert base.migrar(url, esquema)[:3] == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql"]
 
 
 def test_la_0003_se_aplica_igual_despues_de_otra_migracion_posterior(dsn, monkeypatch):
@@ -37,7 +37,7 @@ def test_la_0003_se_aplica_igual_despues_de_otra_migracion_posterior(dsn, monkey
     )
     monkeypatch.setattr(base, "_migraciones", lambda: [m for m in todas if m[0] < "0003"] + [posterior])
     base.migrar(url, esquema)
-    monkeypatch.setattr(base, "_migraciones", lambda: todas + [posterior])
+    monkeypatch.setattr(base, "_migraciones", lambda: [m for m in todas if m[0] < "0004"] + [posterior])
     assert base.migrar(url, esquema) == ["0003_salas.sql"]
     with psycopg.connect(url) as c:
         assert c.execute(
@@ -268,6 +268,6 @@ def test_las_funciones_security_definer_con_search_path_fijo_y_pg_temp_al_final(
             "SELECT p.proname, p.proconfig FROM pg_proc p WHERE p.pronamespace = %s::regnamespace AND p.prosecdef ORDER BY 1",
             (esquema,),
         ).fetchall()
-    assert [f[0] for f in filas] == ["anotar_sala_creada", "socio_activo", "ver_clave_sala"]
+    assert [f[0] for f in filas] == ["anotar_sala_creada", "pedir_reintento", "socio_activo", "ver_clave_sala"]  # V4: la 0005
     for _, config in filas:
         assert config == [f"search_path={esquema}, pg_temp"]

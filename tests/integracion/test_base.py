@@ -12,7 +12,7 @@ from actas.estados import Estado, TransicionNoValida
 
 def test_migrar_es_idempotente(dsn):
     url, esquema = dsn
-    assert base.migrar(url, esquema) == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql"]
+    assert base.migrar(url, esquema) == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql", "0005_eventos.sql"]
     assert base.migrar(url, esquema) == []
 
 
@@ -140,7 +140,12 @@ def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
         c.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(base_datos), sql.Identifier(rol)))
     try:
         dsn_rol = psycopg.conninfo.make_conninfo(url, user=rol, password=None)
-        assert base.migrar(dsn_rol, esquema, password=clave) == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql"]
+        assert base.migrar(dsn_rol, esquema, password=clave) == [
+            "0001_esquema.sql",
+            "0002_panel.sql",
+            "0003_salas.sql",
+            "0005_eventos.sql",
+        ]
     finally:
         with psycopg.connect(url, autocommit=True) as c:
             c.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(esquema)))
