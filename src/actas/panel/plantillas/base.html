@@ -1,26 +1,38 @@
+{% from "_glifos.html" import glifo %}
 <!doctype html>
 <html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="same-origin">
+<meta name="color-scheme" content="dark light">
 <title>{% block titulo %}Actas{% endblock %} · Cenit Digital</title>
 <link rel="stylesheet" href="/estilo.css">
+<script src="/tema.js"></script>
 </head>
 <body>
-<header>
-<nav aria-label="Principal">
-<a href="/">Reuniones</a>
-<a href="/grabar">Grabar</a>
-<form method="get" action="/buscar" role="search">
-<label for="q">Buscar</label>
-<input id="q" name="q" type="search" maxlength="200" value="{{ q | default('') }}">
-<button type="submit">Buscar</button>
-</form>
+<a class="saltar" href="#contenido">Saltar al contenido</a>
+<header class="cabecera">
+<div class="cabecera-dentro">
+<a class="marca" href="/">Actas</a>
+<nav class="secciones" aria-label="Secciones">
+<a href="/"{% if seccion == "reuniones" %} aria-current="page"{% endif %}>Reuniones</a>
+<a href="https://transcribir.cenitdigital.es/#/actas" rel="noopener noreferrer">Transcribir<span aria-hidden="true"> ↗</span></a>
 </nav>
+<form class="buscador" method="get" action="/buscar" role="search">
+<label class="oculto" for="q">Buscar en las transcripciones</label>
+<input id="q" name="q" type="search" maxlength="200" placeholder="Buscar en las transcripciones…" value="{{ q | default('') }}">
+<button class="boton" type="submit">Buscar</button>
+</form>
+<button class="boton" id="tema" type="button" aria-pressed="false" hidden>Tema claro</button>
+<a href="/grabar" class="boton boton-primario"{% if seccion == "grabar" %} aria-current="page"{% endif %}>{{ glifo("punto") }}Grabar</a>
+</div>
 </header>
-<main>
+<main id="contenido" tabindex="-1">
 {% block contenido %}{% endblock %}
 </main>
+<footer class="pie">
+<p>El audio se borra en cuanto la transcripción está guardada, o como mucho a los 7 días.</p>
+</footer>
 </body>
 </html>

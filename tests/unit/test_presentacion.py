@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from actas.presentacion import duracion, hhmmss, nombres
+from actas.presentacion import ESTADOS, Estado, duracion, estado, hhmmss, nombres
 
 
 @pytest.mark.parametrize(
@@ -75,3 +75,34 @@ def test_bloques_con_lista_mezclada_es_parrafo_y_vacio_no_da_nada():
     assert bloques(" \n\n") == []
     assert bloques("#sin espacio") == [("p", ["#sin espacio"])]
     assert bloques("  ## Con sangría  ") == [("h3", ["Con sangría"])]
+
+
+# ── @a42: cada estado con su texto y su glifo, no solo con su color ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("valor", "texto", "glifo"),
+    [
+        ("pedida", "Pedida", "espera"),
+        ("grabando", "Grabando", "punto"),
+        ("grabada", "Grabada", "cuadrado"),
+        ("transcribiendo", "Transcribiendo", "medio"),
+        ("transcrita", "Transcrita", "visto"),
+        ("error", "Error", "cruz"),
+        ("programada", "Programada", "reloj"),
+        ("cancelada", "Cancelada", "prohibido"),
+    ],
+)
+def test_cada_estado_con_su_texto_y_su_glifo(valor, texto, glifo):
+    assert estado(valor) == Estado(texto, glifo)
+
+
+def test_los_estados_conocidos_no_comparten_texto_ni_glifo():
+    vistos = [estado(e) for e in ESTADOS]
+    assert len(ESTADOS) == 8
+    assert len({e.texto for e in vistos}) == len({e.glifo for e in vistos}) == 8
+
+
+def test_un_estado_desconocido_se_muestra_tal_cual_con_un_glifo_propio():
+    assert estado("raro") == Estado("raro", "desconocido")
+    assert "desconocido" not in {estado(e).glifo for e in ESTADOS}

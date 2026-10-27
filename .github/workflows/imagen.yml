@@ -97,6 +97,14 @@ jobs:
           # @a32: sin registro de accesos y el error (aquí, sin base) solo por su tipo: la consulta no sale en el registro.
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Actas-Usuario: humo' -H 'X-Actas-Proxy: secreto-de-humo' \
             'http://127.0.0.1:18080/buscar?q=marcaunicahumo')" = 500
+          # V1: la hoja, el JavaScript del tema y las fuentes van dentro de la imagen (el wheel), con su tipo.
+          for f in estilo.css tema.js fuentes/manrope-latin.woff2 fuentes/gilda-display-400-latin.woff2 \
+            fuentes/jetbrains-mono-latin.woff2 fuentes/OFL-manrope.txt; do
+            curl -fsS -o /dev/null -w "%{http_code} %{content_type} $f\n" -H 'X-Actas-Usuario: humo' \
+              -H 'X-Actas-Proxy: secreto-de-humo' "http://127.0.0.1:18080/$f"
+          done | tee /tmp/estaticos.txt
+          test "$(grep -c '^200 ' /tmp/estaticos.txt)" = 6
+          grep -q '^200 font/woff2 fuentes/manrope-latin.woff2$' /tmp/estaticos.txt
           docker logs panel > /tmp/panel.log 2>&1
           grep -q "petición fallida: OperationalError" /tmp/panel.log
           if grep -q marcaunicahumo /tmp/panel.log; then echo "::error::la consulta salió en el registro"; exit 1; fi

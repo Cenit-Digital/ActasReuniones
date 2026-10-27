@@ -1,11 +1,35 @@
-"""Formato de lo que muestra el panel: tiempos de la transcripción en `hh:mm:ss`, duración de la grabación y los socios por su
-nombre visible (el streamID si no es un socio conocido)."""
+"""Formato de lo que muestra el panel: tiempos de la transcripción en `hh:mm:ss`, duración de la grabación, los socios por su
+nombre visible (el streamID si no es un socio conocido) y cada estado con su texto y su glifo (@a42: no solo el color)."""
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 SIN_DATO = "—"
 _MS = timedelta(milliseconds=1)
+
+
+class Estado(NamedTuple):
+    texto: str
+    glifo: str
+
+
+# Los seis de F1 (`estados.Estado`) y los dos que trae la programación (V3 de KubernetesInfrastructure#298). Los glifos los
+# dibuja `plantillas/_glifos.html`.
+ESTADOS = {
+    "pedida": Estado("Pedida", "espera"),
+    "grabando": Estado("Grabando", "punto"),
+    "grabada": Estado("Grabada", "cuadrado"),
+    "transcribiendo": Estado("Transcribiendo", "medio"),
+    "transcrita": Estado("Transcrita", "visto"),
+    "error": Estado("Error", "cruz"),
+    "programada": Estado("Programada", "reloj"),
+    "cancelada": Estado("Cancelada", "prohibido"),
+}
+
+
+def estado(valor: str) -> Estado:
+    return ESTADOS.get(valor) or Estado(valor, "desconocido")
 
 
 def hhmmss(ms: int) -> str:

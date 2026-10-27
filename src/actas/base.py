@@ -212,6 +212,14 @@ class Repositorio:
             ).fetchall()
         return [_fila(f) for f in filas]
 
+    def reunion_de_trabajo(self, trabajo_id: str) -> str | None:
+        """La reunión que envió ese trabajo a transcribir (enlace de vuelta de su web, @a62); la más nueva si hubiera varias."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "SELECT id::text FROM reuniones WHERE trabajo_id = %s ORDER BY creado_en DESC, id DESC LIMIT 1", (trabajo_id,)
+            ).fetchone()
+        return fila[0] if fila else None
+
     def hay_grabacion(self) -> bool:
         with self.conexion() as c:
             fila = c.execute("SELECT EXISTS (SELECT 1 FROM reuniones WHERE estado = 'grabando')").fetchone()

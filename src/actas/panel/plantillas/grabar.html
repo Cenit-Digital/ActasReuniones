@@ -1,8 +1,14 @@
 {% extends "base.html" %}
+{% set seccion = "grabar" %}
 {% block titulo %}Grabar{% endblock %}
 {% block contenido %}
+<div class="titular">
+<div>
 <h1>Grabar una reunión</h1>
-<section class="informativo" aria-labelledby="informativo">
+<p class="entradilla">Solo se graban las pistas de los socios que den su conformidad.</p>
+</div>
+</div>
+<section class="tarjeta informativo" aria-labelledby="informativo">
 <p id="informativo" class="version">Texto informativo, versión {{ version }}</p>
 {% for tipo, lineas in texto %}
 {% if tipo == "h2" %}<h2>{{ lineas[0] }}</h2>
@@ -12,15 +18,20 @@
 {% endif %}
 {% endfor %}
 </section>
-{% if error %}<p class="error" role="alert">No se ha grabado: {{ error }}.</p>{% endif %}
-<form method="post" action="/grabar">
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha grabado: {{ error }}.</p>{% endif %}
+<form method="post" action="/grabar" class="tarjeta">
 <fieldset>
 <legend>Socios conformes en esta reunión</legend>
+<div class="opciones">
 {% for sid, nombre in socios %}
-<label><input type="checkbox" name="socio" value="{{ sid }}"> {{ nombre }} ({{ sid }})</label>
+<label class="opcion"><input type="checkbox" name="socio" value="{{ sid }}"> {{ nombre }} <span class="detalle mono">({{ sid }})</span></label>
 {% endfor %}
+</div>
 </fieldset>
 <input type="hidden" name="version" value="{{ version }}">
-<button type="submit">Grabar</button>
+<div class="acciones">
+<button class="boton boton-primario" type="submit">Grabar</button>
+<a class="boton" href="/">Cancelar</a>
+</div>
 </form>
 {% endblock %}

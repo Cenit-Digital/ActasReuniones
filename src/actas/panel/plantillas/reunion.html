@@ -1,25 +1,65 @@
 {% extends "base.html" %}
+{% from "_glifos.html" import glifo, chip %}
+{% set seccion = "reuniones" %}
 {% block titulo %}Reunión del {{ fecha }}{% endblock %}
 {% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> Reunión del {{ fecha }}</nav>
+<div class="titular">
+<div>
 <h1>Reunión del {{ fecha }}</h1>
-<dl>
-<dt>Estado</dt><dd>{{ r.estado }}{% if r.motivo %} ({{ r.motivo }}){% endif %}</dd>
-<dt>Duración</dt><dd>{{ duracion }}</dd>
-<dt>Socios</dt><dd>{{ socios }}</dd>
-<dt>Pedida por</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
-<dt>Conformidades</dt><dd>{% for nombre, version in conformidades %}{{ nombre }} (texto {{ version }}){% if not loop.last %}, {% endif %}{% endfor %}</dd>
-</dl>
+<p class="linea-datos">{{ chip(r.estado) }}<span class="mono">{{ duracion }}</span><span>{{ socios }}</span></p>
+</div>
+<div class="acciones">
+{% if transcribir %}<a class="boton" href="{{ transcribir }}" target="_blank" rel="noopener noreferrer">Abrir en transcribir<span aria-hidden="true"> ↗</span><span class="oculto"> (se abre en otra pestaña)</span></a>{% endif %}
 {% if r.estado == "grabando" %}
-<form method="post" action="/parar" class="parar"><button type="submit">Parar</button></form>
+<form method="post" action="/parar"><button class="boton boton-peligro" type="submit">Parar</button></form>
 {% endif %}
-<h2>Transcripción</h2>
+</div>
+</div>
+{% if r.estado == "error" %}
+<section class="aviso aviso-error" id="diagnostico" aria-labelledby="t-diagnostico">
+{{ glifo("cruz") }}
+<div>
+<h2 id="t-diagnostico">Diagnóstico</h2>
+<p>La reunión está en error: <span class="mono">{{ r.motivo or "sin motivo anotado" }}</span>.</p>
+</div>
+</section>
+{% endif %}
+<div class="columnas">
+<section class="tarjeta transcripcion" aria-labelledby="t-transcripcion">
+<h2 id="t-transcripcion">Transcripción</h2>
 {% if segmentos %}
-<ol class="transcripcion">
-{% for tiempo, hablante, texto in segmentos %}
-<li><time>{{ tiempo }}</time> <strong>{{ hablante }}</strong> {{ texto }}</li>
+<ol class="segmentos">
+{% for tiempo, hablante, color, texto in segmentos %}
+<li><time class="mono">{{ tiempo }}</time><div><span class="hablante h{{ color }}">{{ hablante }}</span><p>{{ texto }}</p></div></li>
 {% endfor %}
 </ol>
 {% else %}
-<p>Aún no hay transcripción.</p>
+<p class="vacio">Aún no hay transcripción.</p>
 {% endif %}
+</section>
+<aside class="lateral">
+<section class="tarjeta" aria-labelledby="t-datos">
+<h2 id="t-datos">Datos</h2>
+<dl class="datos">
+<dt>Estado</dt><dd>{{ chip(r.estado) }}{% if r.motivo %} <span class="mono">{{ r.motivo }}</span>{% endif %}</dd>
+<dt>Duración</dt><dd class="mono">{{ duracion }}</dd>
+<dt>Socios</dt><dd>{{ socios }}</dd>
+<dt>Pedida por</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
+</dl>
+</section>
+<section class="tarjeta" aria-labelledby="t-conformidades">
+<h2 id="t-conformidades">Conformidades</h2>
+{% if conformidades %}
+<ul class="conformidades">
+{% for nombre, version in conformidades %}
+<li><span>{{ glifo("visto") }}{{ nombre }}</span><span class="detalle">texto {{ version }}</span></li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="vacio">Ninguna.</p>
+{% endif %}
+</section>
+</aside>
+</div>
 {% endblock %}

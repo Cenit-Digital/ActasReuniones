@@ -1,29 +1,50 @@
 {% extends "base.html" %}
+{% from "_glifos.html" import glifo, chip %}
+{% set seccion = "reuniones" %}
 {% block titulo %}Reuniones{% endblock %}
 {% block contenido %}
+<div class="titular">
+<div>
 <h1>Reuniones</h1>
+<p class="entradilla">Grabaciones y transcripciones de las reuniones de socios.</p>
+</div>
+</div>
+{% if en_error %}
+<section class="aviso aviso-error" aria-labelledby="aviso-error">
+{{ glifo("cruz") }}
+<div>
+<h2 id="aviso-error">{% if en_error | length == 1 %}1 reunión en error{% else %}{{ en_error | length }} reuniones en error{% endif %}</h2>
+<ul>
+{% for r in en_error %}
+<li>Reunión del {{ r.fecha }}: <span class="mono">{{ r.motivo or "sin motivo anotado" }}</span>. <a href="/reuniones/{{ r.id }}#diagnostico">Ver qué pasó<span class="oculto"> en la reunión del {{ r.fecha }}</span></a></li>
+{% endfor %}
+</ul>
+</div>
+</section>
+{% endif %}
 {% if activa %}
-<form method="post" action="/parar" class="parar">
-<p>Hay una grabación en curso.</p>
-<button type="submit">Parar</button>
+<form method="post" action="/parar" class="tarjeta en-curso">
+<p>{{ glifo("punto") }}Hay una grabación en curso.</p>
+<button class="boton boton-peligro" type="submit">Parar</button>
 </form>
 {% endif %}
 {% if reuniones %}
+<div class="tabla" role="region" aria-label="Lista de reuniones" tabindex="0">
 <table>
-<thead><tr><th scope="col">Fecha</th><th scope="col">Duración</th><th scope="col">Estado</th><th scope="col">Motivo</th><th scope="col">Socios</th></tr></thead>
+<thead><tr><th scope="col">Reunión</th><th scope="col">Duración</th><th scope="col">Estado</th><th scope="col">Socios</th></tr></thead>
 <tbody>
 {% for r in reuniones %}
 <tr>
-<td><a href="/reuniones/{{ r.id }}">{{ r.fecha }}</a></td>
-<td>{{ r.duracion }}</td>
-<td>{{ r.estado }}</td>
-<td>{{ r.motivo }}</td>
+<td><a href="/reuniones/{{ r.id }}">{{ r.fecha }}</a>{% if r.motivo %}<span class="detalle mono">{{ r.motivo }}</span>{% endif %}</td>
+<td class="mono">{{ r.duracion }}</td>
+<td>{{ chip(r.estado) }}</td>
 <td>{{ r.socios }}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
 {% else %}
-<p>Aún no hay reuniones.</p>
+<p class="vacio tarjeta">Aún no hay reuniones.</p>
 {% endif %}
 {% endblock %}
