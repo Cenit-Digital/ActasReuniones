@@ -68,6 +68,8 @@ class Sala:
 
     def url(self, socio: str) -> str:
         """URL de la página espectadora de `socio`. Lleva la contraseña: nunca se registra sin redactar."""
+        if not self.nombre or not self.clave:
+            raise ValueError("sala sin room o sin contraseña: sería la sala pública del sitio")
         params: list[tuple[str, str | None]] = [
             ("room", self.nombre),
             ("password", self.clave),

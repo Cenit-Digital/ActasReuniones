@@ -258,3 +258,16 @@ def test_el_supervisor_lee_las_salas_pero_no_las_cambia_ni_toca_la_auditoria(rep
             {"s": f"{esquema}.salas", "e": f"{esquema}.salas_eventos", "o": f"{esquema}.socios"},
         ).fetchone()
     assert fila == (True, False, False, False)
+
+
+def test_las_funciones_security_definer_con_search_path_fijo_y_pg_temp_al_final(repo, dsn):
+    # Doc de CREATE FUNCTION (PostgreSQL 18), «Writing SECURITY DEFINER Functions Safely»: pg_temp, explícito y el último.
+    _, esquema = dsn
+    with repo.conexion() as c:
+        filas = c.execute(
+            "SELECT p.proname, p.proconfig FROM pg_proc p WHERE p.pronamespace = %s::regnamespace AND p.prosecdef ORDER BY 1",
+            (esquema,),
+        ).fetchall()
+    assert [f[0] for f in filas] == ["anotar_sala_creada", "socio_activo", "ver_clave_sala"]
+    for _, config in filas:
+        assert config == [f"search_path={esquema}, pg_temp"]

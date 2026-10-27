@@ -46,9 +46,9 @@ CREATE TABLE socios (
 ALTER TABLE reuniones ADD COLUMN sala_id uuid REFERENCES salas (id);
 
 -- 5. Ver la contraseña de una sala (@a45): la única forma que tiene el panel de leer `cifrada`, y siempre deja su fila
--- `clave_vista` en la misma transacción (la auditoría no depende del panel). NULL si la sala no existe.
+-- `clave_vista` en la misma transacción: la fila no depende del panel (el usuario sí: es el de BasicAuth que le pasa el panel). NULL si la sala no existe.
 CREATE FUNCTION ver_clave_sala(p_sala uuid, p_usuario text) RETURNS bytea
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $$
+LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
     c bytea;
 BEGIN
@@ -63,7 +63,7 @@ $$;
 
 -- 6. Quién creó cada sala, desde la propia base: así el panel no necesita escribir en la auditoría (no puede inventarla).
 CREATE FUNCTION anotar_sala_creada() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $$
+LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
     INSERT INTO salas_eventos (sala_id, tipo, usuario) VALUES (NEW.id, 'sala_creada', NEW.creada_por);
     RETURN NULL;
@@ -73,14 +73,24 @@ CREATE TRIGGER salas_anotar_creada AFTER INSERT ON salas FOR EACH ROW EXECUTE FU
 
 -- 7. Dar de baja o de alta a un socio sin UPDATE de tabla para el panel. True si existe.
 CREATE FUNCTION socio_activo(p_push text, p_activo boolean) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path FROM CURRENT AS $$
+LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
     UPDATE socios SET activo = p_activo WHERE push = p_push;
     RETURN FOUND;
 END
 $$;
 
--- 8. Permisos. actas_app (supervisor y actas.sh) recibe SELECT, INSERT y UPDATE de cada tabla nueva por los privilegios por
+-- 8. search_path fijo, con pg_temp explícito y el último (si no, se busca el primero y una tabla temporal `salas_eventos` se
+-- llevaría la fila `clave_vista`). El esquema no va escrito: es el de la migración (base.migrar lo pone en el search_path).
+DO $$
+BEGIN
+    EXECUTE format('ALTER FUNCTION ver_clave_sala(uuid, text) SET search_path = %I, pg_temp', current_schema());
+    EXECUTE format('ALTER FUNCTION socio_activo(text, boolean) SET search_path = %I, pg_temp', current_schema());
+    EXECUTE format('ALTER FUNCTION anotar_sala_creada() SET search_path = %I, pg_temp', current_schema());
+END
+$$;
+
+-- 9. Permisos. actas_app (supervisor y actas.sh) recibe SELECT, INSERT y UPDATE de cada tabla nueva por los privilegios por
 -- defecto del inquilino (KubernetesInfrastructure, kubernetes/postgres/inquilinos.sql): aquí se le deja solo lo que necesita,
 -- leer las salas para grabar. La auditoría no la puede tocar.
 REVOKE ALL ON salas, salas_eventos, socios FROM actas_app, actas_panel;
