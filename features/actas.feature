@@ -167,3 +167,18 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Cuando Pablo pulsa «Reintentar»
     Entonces el supervisor la pasa a «grabada» y la reenvía, sin terminal
     Y si el audio ya no está, la petición se descarta y la reunión sigue en error
+
+  Escenario: @a58 copiar mensaje para los socios (compartir, nivel 1)
+    Dado una reunión con transcripción y sala
+    Cuando Pablo elige en «Compartir» la transcripción o el enlace de la sala y a qué socios
+    Entonces el panel prepara un mensaje por socio, en un texto que se copia, y un mailto con el mismo contenido
+    Y la transcripción va entera, con un .txt para adjuntarla si no cabe en el mailto
+    Y cada socio recibe su propio enlace a la sala, nunca la contraseña: esa se copia desde la sala y va por otro canal
+    Y el panel no envía nada: sale por el correo o la mensajería de Pablo
+
+  Escenario: @a60 copiar diagnóstico para Claude
+    Dado una reunión en error
+    Cuando Pablo pulsa «Copiar diagnóstico para Claude»
+    Entonces copia un bloque con el motivo, el diagnóstico, los eventos, las comprobaciones y las versiones
+    Y los socios van como S1-S3 y los usuarios del panel como U1…
+    Y no lleva contraseñas, hash, enlaces, la sala ni texto de los segmentos

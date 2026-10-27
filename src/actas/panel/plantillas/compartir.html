@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set seccion = "reuniones" %}
+{% block titulo %}Compartir la reunión del {{ fecha }}{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> <a href="/reuniones/{{ r.id }}">Reunión del {{ fecha }}</a> <span aria-hidden="true">/</span> Compartir</nav>
+<div class="titular">
+<div>
+<h1>Compartir con los socios</h1>
+<p class="linea-datos"><span>Reunión del {{ fecha }}</span></p>
+</div>
+</div>
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha preparado el mensaje: {{ error }}.</p>{% endif %}
+<section class="tarjeta" aria-labelledby="t-preparar">
+<h2 id="t-preparar">Preparar el mensaje</h2>
+<form class="formulario" method="get" action="/reuniones/{{ r.id }}/compartir">
+<fieldset>
+<legend>Qué</legend>
+{% if ofrecido %}
+<div class="opciones">
+{% if "transcripcion" in ofrecido %}<label class="opcion"><input type="checkbox" name="que" value="transcripcion"{% if "transcripcion" in que %} checked{% endif %}>Transcripción, el texto entero</label>{% endif %}
+{% if "enlace_sala" in ofrecido %}<label class="opcion"><input type="checkbox" name="que" value="enlace_sala"{% if "enlace_sala" in que %} checked{% endif %}>Enlace de la sala, el de cada socio</label>{% endif %}
+</div>
+{% else %}
+<p class="vacio">Esta reunión aún no tiene transcripción ni sala que compartir.</p>
+{% endif %}
+{% if sala %}<p class="detalle">La contraseña de la sala nunca va en estos mensajes: cópiala desde <a href="/salas/{{ sala.id }}/clave">la sala</a> y mándala por otro canal.</p>{% endif %}
+</fieldset>
+<fieldset>
+<legend>A quién</legend>
+<div class="opciones">
+{% for d in destinatarios %}
+<label class="opcion"><input type="checkbox" name="socio" value="{{ d.push }}"{% if d.push in marcados %} checked{% endif %}>{{ d.nombre }}<span class="detalle">{{ d.correo or "sin correo" }}</span></label>
+{% endfor %}
+</div>
+</fieldset>
+<p class="detalle">El panel no envía nada: prepara el texto y tú lo mandas desde tu correo o tu mensajería.</p>
+<div class="acciones"><button class="boton boton-primario" type="submit">Preparar el mensaje</button></div>
+</form>
+</section>
+{% if mensajes %}
+<section class="tarjeta" aria-labelledby="t-mensajes">
+<h2 id="t-mensajes">Mensajes</h2>
+{% if "transcripcion" in elegido %}<p><a class="boton" href="/reuniones/{{ r.id }}/transcripcion.txt" download>Descargar la transcripción en .txt</a></p>{% endif %}
+{% for m in mensajes %}
+<div class="preparado">
+<label for="mensaje-{{ loop.index }}">Para {{ m.destinatario.nombre }} · asunto «{{ m.asunto }}»</label>
+<textarea id="mensaje-{{ loop.index }}" rows="10" readonly>{{ m.texto }}</textarea>
+<div class="en-linea">
+<button class="boton boton-primario" type="button" data-copiar="mensaje-{{ loop.index }}" hidden>Copiar mensaje<span class="oculto"> para {{ m.destinatario.nombre }}</span></button>
+<a class="boton" href="{{ m.mailto }}">Abrir en mi correo<span class="oculto"> el mensaje para {{ m.destinatario.nombre }}</span></a>
+</div>
+{% if not m.mailto_completo %}<p class="detalle">La transcripción es demasiado larga para abrirla en el correo: se abre sin ella y tienes que adjuntar el .txt.</p>{% endif %}
+</div>
+{% endfor %}
+</section>
+{% endif %}
+{% endblock %}

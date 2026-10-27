@@ -11,6 +11,8 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
 - Diagnóstico (V4 de KubernetesInfrastructure#298, ADR 0023 decisión 7): el motivo en lenguaje claro (`diagnostico.py`), el
   historial de eventos y las comprobaciones del latido, todo desde la base. Los registros crudos de los pods, en la consola:
   el panel no tiene permisos sobre Kubernetes.
+- «Compartir» (V5 nivel 1, decisión 8; `compartir.py`) y «Copiar diagnóstico para Claude» (V6 parte a, decisión 9;
+  `para_claude.py`): solo preparan texto, que se ve en un `<textarea readonly>` y copia `copiar.js`. Nada se escribe.
 - Quién pulsa: la cabecera `X-Actas-Usuario`, que pone el Middleware `basicauth` de Traefik (`headerField`, con `removeHeader`
   para que la contraseña no llegue aquí). Solo se cree si además llega `X-Actas-Proxy` con el secreto que añade otro middleware
   de la misma ruta (el patrón de la consola): la NetworkPolicy no es la única barrera. Sin las dos, 401 y nada se escribe.
@@ -45,7 +47,7 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from actas import busqueda, diagnostico, enlaces, presentacion, salas
+from actas import busqueda, compartir, diagnostico, enlaces, para_claude, presentacion, salas
 from actas.base import Repositorio, es_uuid
 from actas.conformidad import ConformidadNoValida
 from actas.formulario import FormularioNoValido, usuario, validar_grabar, validar_socio, version_de_fichero
@@ -354,6 +356,7 @@ def crear_app(
                 sala = await en_hilo(repo.sala, r["sala_id"])
             except KeyError:
                 sala = None
+        datos = await en_hilo(repo.diagnostico, rid)
         contexto = {
             "r": r,
             "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
@@ -367,9 +370,77 @@ def crear_app(
             "transcribir": f"{TRANSCRIBIR}/#/trabajos/{r['trabajo_id']}" if r.get("trabajo_id") else None,
             "sala": sala,
             "consola": CONSOLA,
-            **_diagnostico(r, await en_hilo(repo.diagnostico, rid)),
+            **_diagnostico(r, datos),
         }
+        if contexto["diagnostico"]:  # @a60
+            contexto["para_claude"] = para_claude.bloque(
+                r, conformidades, datos["eventos"], contexto["diagnostico"], [c[:2] for c in contexto["comprobaciones"]], socios
+            )
         return pagina(peticion, "reunion.html", contexto)
+
+    # ── Compartir (V5 nivel 1) ────────────────────────────────────────────────────────────────────────────────────────
+
+    async def detalle_o_404(peticion: Request) -> tuple[dict[str, Any], list[tuple[str, int, int, str]]]:
+        rid = peticion.path_params["rid"]
+        if not es_uuid(rid):
+            raise HTTPException(404)
+        try:
+            r, _conformidades, segmentos = await en_hilo(repo.detalle, rid)
+        except KeyError:
+            raise HTTPException(404) from None
+        return r, segmentos
+
+    async def ver_compartir(peticion: Request) -> Response:
+        """@a58: el formulario es un GET (sin JavaScript, la misma página enseña los mensajes) y solo lleva lo marcado."""
+        r, segmentos = await detalle_o_404(peticion)
+        todos = {s["push"]: s for s in await en_hilo(repo.socios)}
+        nombres = {p: s["nombre"] for p, s in todos.items()}
+        destinatarios = {p: compartir.Destinatario(p, nombres.get(p, p), (todos.get(p) or {}).get("correo")) for p in r["socios"]}
+        sala = None
+        if r.get("sala_id"):
+            try:
+                sala = await en_hilo(repo.sala, r["sala_id"])
+            except KeyError:
+                sala = None
+        ofrecido = {q for q, si in (("transcripcion", segmentos), ("enlace_sala", sala)) if si}
+        fecha = r["creado_en"].strftime("%Y-%m-%d %H:%M")
+        que, marcados = peticion.query_params.getlist("que"), peticion.query_params.getlist("socio")
+        contexto: dict[str, Any] = {
+            "r": r,
+            "fecha": fecha,
+            "sala": sala,
+            "ofrecido": ofrecido,
+            "destinatarios": list(destinatarios.values()),
+            "que": set(que),
+            "marcados": set(marcados),
+            "mensajes": [],
+            "error": "",
+        }
+        if not que and not marcados:
+            return pagina(peticion, "compartir.html", contexto)
+        try:
+            elegido, elegidos = compartir.elegir(que, marcados, ofrecido, destinatarios)
+        except compartir.CompartirNoValido as e:
+            contexto["error"] = str(e)
+            return pagina(peticion, "compartir.html", contexto, 400)
+        enlaces_sala = (
+            {p: enlaces.enlace(sala["room"], sala["hash"], p, d.nombre) for p, d in destinatarios.items()} if sala else {}
+        )
+        transcripcion = compartir.texto_transcripcion(segmentos, nombres) if "transcripcion" in elegido else None
+        contexto["mensajes"] = compartir.preparar(
+            fecha, elegido, [destinatarios[p] for p in elegidos], transcripcion, enlaces_sala
+        )
+        contexto["elegido"] = elegido
+        return pagina(peticion, "compartir.html", contexto)
+
+    async def transcripcion_txt(peticion: Request) -> Response:
+        """Para adjuntarla: un `mailto:` no puede adjuntar ficheros y una transcripción larga no cabe en él."""
+        r, segmentos = await detalle_o_404(peticion)
+        if not segmentos:
+            raise HTTPException(404)
+        nombre = r["creado_en"].strftime("transcripcion-%Y-%m-%d-%H%M.txt")
+        texto = compartir.texto_transcripcion(segmentos, await directorio()) + "\n"
+        return PlainTextResponse(texto, headers={"content-disposition": f'attachment; filename="{nombre}"'})
 
     async def reintentar(peticion: Request) -> Response:
         """@a57: solo anota la petición; el supervisor la atiende en su próxima vuelta si el audio sigue en el tmpfs."""
@@ -543,6 +614,8 @@ def crear_app(
         Route("/reuniones", de_trabajo),
         Route("/reuniones/{rid}", reunion),
         Route("/reuniones/{rid}/reintentar", reintentar, methods=["POST"]),
+        Route("/reuniones/{rid}/compartir", ver_compartir, methods=["GET"]),
+        Route("/reuniones/{rid}/transcripcion.txt", transcripcion_txt, methods=["GET"]),
         Route("/buscar", buscar),
         Route("/grabar", ver_grabar, methods=["GET"]),
         Route("/grabar", grabar, methods=["POST"]),

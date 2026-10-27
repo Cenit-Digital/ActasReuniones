@@ -11,6 +11,7 @@
 </div>
 <div class="acciones">
 {% if transcribir %}<a class="boton" href="{{ transcribir }}" target="_blank" rel="noopener noreferrer">Abrir en transcribir<span aria-hidden="true"> ↗</span><span class="oculto"> (se abre en otra pestaña)</span></a>{% endif %}
+{% if segmentos or sala %}<a class="boton" href="/reuniones/{{ r.id }}/compartir">Compartir</a>{% endif %}
 {% if r.estado == "grabando" %}
 <form method="post" action="/parar"><button class="boton boton-peligro" type="submit">Parar</button></form>
 {% endif %}
@@ -67,6 +68,7 @@
 </ul>
 </section>
 {% endif %}
+{% if para_claude %}{% include "_para_claude.html" %}{% endif %}
 <section class="tarjeta" aria-labelledby="t-datos">
 <h2 id="t-datos">Datos</h2>
 <dl class="datos">
