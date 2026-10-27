@@ -155,12 +155,14 @@ jobs:
           '
           docker rm -f navegador >/dev/null
           docker rm -f panel >/dev/null
-      - name: Tamaño (tope 150 MB sin comprimir)
+      # 150 MB desde F1; 175 MB desde V2 de KubernetesInfrastructure#298 (decisión de Pablo, 2026-10-27): `cryptography` (AES-GCM
+      # de las salas) añade unos 16 MB, 14 de ellos su biblioteca de Rust, y la imagen pasó de 149 a 166 MB.
+      - name: Tamaño (tope 175 MB sin comprimir)
         run: |
           set -euo pipefail
           bytes="$(docker image inspect "$PRUEBA" --format '{{.Size}}')"
           echo "actas-supervisor: $((bytes / 1000000)) MB" | tee -a "$GITHUB_STEP_SUMMARY"
-          [ "$bytes" -lt 150000000 ] || { echo "::error::la imagen supera el tope"; exit 1; }
+          [ "$bytes" -lt 175000000 ] || { echo "::error::la imagen supera el tope"; exit 1; }
       - name: Vulnerabilidades (trivy, CRITICAL y HIGH con arreglo)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
