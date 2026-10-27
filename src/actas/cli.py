@@ -14,6 +14,7 @@ import sys
 
 from actas.base import Repositorio
 from actas.conformidad import ConformidadNoValida, validar
+from actas.salas import SalaNoDisponible
 
 _ARGUMENTOS = {"grabar": (3, 4), "parar": (1,), "estado": (1,), "reintentar": (2,)}
 
@@ -28,7 +29,7 @@ def main(args: list[str], repo: Repositorio | None = None) -> int:
         try:
             peticion = validar([s for s in args[1].split(",") if s], args[2])
             sala = _sala(repo, args[3] if len(args) == 4 else None)
-        except ConformidadNoValida as e:
+        except (ConformidadNoValida, SalaNoDisponible) as e:
             print(f"rechazada: {e}", file=sys.stderr)
             return 1
         print(repo.pedir(peticion, sala_id=sala))
@@ -60,12 +61,12 @@ def _sala(repo: Repositorio, room: str | None) -> str:
     if room is not None:
         elegidas = [sid for sid, r in salas if r == room]
         if not elegidas:
-            raise ConformidadNoValida("no existe la sala indicada: créala en el panel")
+            raise SalaNoDisponible("no existe la sala indicada: créala en el panel")
         return elegidas[0]
     if not salas:
-        raise ConformidadNoValida("no hay ninguna sala: créala en el panel («Salas y socios»)")
+        raise SalaNoDisponible("no hay ninguna sala: créala en el panel («Salas y socios»)")
     if len(salas) > 1:
-        raise ConformidadNoValida("hay varias salas: indica en cuál se graba (su nombre en VDO.Ninja)")
+        raise SalaNoDisponible("hay varias salas: indica en cuál se graba (su nombre en VDO.Ninja)")
     return salas[0][0]
 
 

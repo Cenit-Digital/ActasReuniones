@@ -22,7 +22,7 @@ from pathlib import Path
 from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium
 from actas.enlaces import BASE
-from actas.grabador import Grabacion, Sala, sala_de_reunion
+from actas.grabador import SALA_RESCATE, Grabacion, Sala, sala_de_reunion
 from actas.metricas import Metricas, servir
 from actas.plataforma import Plataforma
 from actas.registro import Registro
@@ -72,13 +72,13 @@ class _GrabacionConCdp:
             self._g.cdp.cerrar()
 
 
-def cerrar_paginas_de_sala(cdp_url: str, registro: Registro, base: str = BASE) -> None:
+def cerrar_paginas_de_vdo_ninja(cdp_url: str, registro: Registro) -> None:
     """Al arrancar, tras el rescate: cierra las páginas de VDO.Ninja que aún queden abiertas, de cualquier sala (seguirían
     grabando), y deniega las descargas hasta la próxima grabación."""
     cdp = Cdp(cdp_url, registro)  # sin Chromium no se sigue: podría haber páginas grabando sin control
     try:
         for t in cdp.enviar("Target.getTargets")["targetInfos"]:
-            if t.get("type") == "page" and str(t.get("url", "")).startswith(base):
+            if t.get("type") == "page" and str(t.get("url", "")).startswith(BASE):
                 cdp.cerrar_pagina(t["targetId"])
                 registro("cerrada una página de un supervisor anterior")
         cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"})
@@ -109,7 +109,7 @@ def main() -> None:
         repo=repo,
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
         sala_de=lambda r: sala_de_reunion(r, repo.cifrada_de_sala, maestra, registro),
-        nueva_grabacion=lambda sala, socios, destino: _GrabacionConCdp(cdp_url, sala, socios, destino, registro),
+        nueva_grabacion=lambda sala, socios, destino: _GrabacionConCdp(cdp_url, sala or SALA_RESCATE, socios, destino, registro),
         raiz=Path(e.get("ACTAS_GRABACIONES", "/grabaciones")),
         registro=registro,
         metricas=metricas,
@@ -121,7 +121,7 @@ def main() -> None:
     # responde en 5 min, el proceso sale y el contenedor se reinicia; avisa ActasSupervisorParado).
     esperar_chromium(cdp_url)
     sup.arrancar()  # rescata la grabación en curso, si la había, antes de cerrar lo que sobre
-    cerrar_paginas_de_sala(cdp_url, registro)
+    cerrar_paginas_de_vdo_ninja(cdp_url, registro)
     registro("supervisor en marcha")
     while not fin.is_set():
         try:

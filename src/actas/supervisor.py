@@ -94,10 +94,14 @@ class Supervisor:
         motivo `reinicio_supervisor` y se envía lo que haya (sin nada, acaba en `error: pistas`)."""
         for r in self.repo.en_estado(Estado.GRABANDO):
             try:
-                grabador = self.nueva_grabacion(self.sala_de(r), tuple(r["socios"]), self.raiz / r["id"])
+                sala = self.sala_de(r)
+            except SalaNoDisponible:
+                sala = None  # pedida antes de V2: se retoma igual, para no perder lo grabado (la parada no usa la sala)
+            try:
+                grabador = self.nueva_grabacion(sala, tuple(r["socios"]), self.raiz / r["id"])
                 grabador.reanudar()
                 grabador.parar()
-            except Exception as e:  # noqa: BLE001 — Chromium también se reinició (o la sala ya no está): nada que rescatar
+            except Exception as e:  # noqa: BLE001 — Chromium también se reinició: no hay nada que rescatar
                 self.log("no se pudo retomar la grabación:", type(e).__name__)
             self.repo.mover(r["id"], Estado.GRABANDO, Estado.GRABADA, motivo="reinicio_supervisor", fin=True)
             self.metricas.sumar("errores_total")  # la grabación se cortó a mitad: que avise

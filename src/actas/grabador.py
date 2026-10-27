@@ -84,6 +84,11 @@ class Sala:
         return self.base + "?" + "&".join(k if v is None else f"{k}={urllib.parse.quote(v, safe='')}" for k, v in params)
 
 
+# Solo para retomar al arrancar una grabación sin sala (pedida antes de V2): `reanudar` y `parar` usan la base de las URL, no
+# el room ni la contraseña.
+SALA_RESCATE = Sala("", "")
+
+
 def sala_de_reunion(
     r: Mapping[str, Any], cifrada_de: Callable[[str], tuple[str, bytes] | None], maestra: bytes, registro: Registro
 ) -> Sala:

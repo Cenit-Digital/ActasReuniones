@@ -379,18 +379,24 @@ def crear_app(
             sid = await en_hilo(
                 repo.crear_sala, nombre, room, enlaces.hash_sala(clave), cifrada, peticion.headers[CABECERA_USUARIO]
             )
-        except psycopg.errors.UniqueViolation:
+        except psycopg.errors.UniqueViolation as e:
+            if e.diag.constraint_name != "salas_nombre_key":
+                raise  # el room repetido (36^16 posibles): 500 y Pablo lo vuelve a intentar
             return await sala_nueva(peticion, "Ya hay una sala con ese nombre", 400)
         return RedirectResponse(f"/salas/{sid}", status_code=303)
 
-    async def una_sala(peticion: Request, clave: str | None = None) -> Response:
+    async def sala_o_404(peticion: Request) -> dict[str, Any]:
         sid = peticion.path_params["sid"]
         if not es_uuid(sid):
             raise HTTPException(404)
         try:
-            sala = await en_hilo(repo.sala, sid)
+            sala: dict[str, Any] = await en_hilo(repo.sala, sid)
         except KeyError:
             raise HTTPException(404) from None
+        return sala
+
+    async def una_sala(peticion: Request, sala: dict[str, Any], clave: str | None = None) -> Response:
+        sid = sala["id"]
         activos = [s for s in await en_hilo(repo.socios) if s["activo"]]
         contexto = {
             "sala": sala,
@@ -406,32 +412,22 @@ def crear_app(
         return pagina(peticion, "sala.html", contexto)
 
     async def ver_sala(peticion: Request) -> Response:
-        return await una_sala(peticion)
+        return await una_sala(peticion, await sala_o_404(peticion))
 
     async def confirmar_clave(peticion: Request) -> Response:
-        sid = peticion.path_params["sid"]
-        if not es_uuid(sid):
-            raise HTTPException(404)
-        try:
-            sala = await en_hilo(repo.sala, sid)
-        except KeyError:
-            raise HTTPException(404) from None
-        return pagina(peticion, "sala_clave.html", {"sala": sala})
+        return pagina(peticion, "sala_clave.html", {"sala": await sala_o_404(peticion)})
 
     async def mostrar_clave(peticion: Request) -> Response:
         """@a45: la base anota `clave_vista` (quién y cuándo) en la misma transacción en la que da el valor cifrado."""
-        sid = peticion.path_params["sid"]
-        if not es_uuid(sid):
-            raise HTTPException(404)
-        cifrada = await en_hilo(repo.ver_clave, sid, peticion.headers[CABECERA_USUARIO])
+        sala = await sala_o_404(peticion)
+        cifrada = await en_hilo(repo.ver_clave, sala["id"], peticion.headers[CABECERA_USUARIO])
         if cifrada is None:
             raise HTTPException(404)
-        sala = await en_hilo(repo.sala, sid)
         try:
             clave = salas.descifrar(maestra, sala["room"], cifrada)
         except salas.ClaveNoValida:
             return mensaje(peticion, "La contraseña de esta sala no se puede descifrar con la clave del panel.", 500)
-        return await una_sala(peticion, clave)
+        return await una_sala(peticion, sala, clave)
 
     async def alta_socio(peticion: Request) -> Response:
         form = await formulario(peticion)

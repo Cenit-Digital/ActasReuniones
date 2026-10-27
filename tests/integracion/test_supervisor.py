@@ -624,10 +624,11 @@ def test_al_arrancar_rescata_con_la_sala_de_la_reunion(repo, tmp_path):
     assert repo.reunion(rid)["estado"] == "grabada"
 
 
-def test_al_arrancar_sin_sala_la_reunion_pasa_igual_a_grabada(repo, tmp_path):
+def test_al_arrancar_una_grabacion_sin_sala_se_retoma_igual(repo, tmp_path):
+    # Pedida por la imagen anterior a V2 (sin sala_id): sus páginas se paran de forma ordenada para no perder lo grabado.
     sup, usadas, _ = _con_salas(repo, tmp_path)
     rid = repo.pedir(Peticion(("socioa",), "v1"))
     repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO)
     sup.arrancar()
-    assert usadas == []
+    assert usadas == [None] and GrabacionFalsa.creadas[0].reanudada and GrabacionFalsa.creadas[0].parada
     assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "reinicio_supervisor")
