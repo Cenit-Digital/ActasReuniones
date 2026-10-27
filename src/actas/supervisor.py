@@ -78,7 +78,8 @@ class _Activa:
     faltan: int = 0  # socios conformes que no publican, en el último aviso anotado
     tope_s: int = TOPE_GRABACION_S  # el de la reunión (V3)
     # La de una programada: si en ella no publica ningún socio conforme, se cancela. Se cuenta desde que empieza a grabar, no
-    # desde su hora: si empezó tarde (otra grabación en marcha), los socios tienen su espera entera para entrar.
+    # desde su hora: si empezó tarde (otra grabación en marcha), los socios tienen su espera entera para entrar (Pablo,
+    # 2026-10-27, en la revisión de V3).
     espera_s: int | None = None
     alguno_visto: bool = False  # algún socio conforme publicó en la sala en alguna vigilancia
 

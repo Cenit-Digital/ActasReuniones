@@ -140,3 +140,12 @@ def test_en_la_espera_sin_nadie_se_cancela():
 
 def test_si_alguien_entro_no_se_cancela():
     assert not nadie_entro(segundos=3600, espera_s=900, alguno_visto=True)
+
+
+def test_pasado_el_tope_tambien_para():
+    """Una vuelta que llega tarde (la base caída, una parada lenta) no se salta el tope."""
+    assert motivo_parada(inicio_s=0.0, ahora_s=3700.0, parar_pedido=False, tope_s=3600) == "tope"
+
+
+def test_pasada_la_espera_sin_nadie_tambien_se_cancela():
+    assert nadie_entro(segundos=960, espera_s=900, alguno_visto=False)
