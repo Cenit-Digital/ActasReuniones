@@ -1,0 +1,19 @@
+{#- Glifos de los estados (@a42: no solo el color) y de los avisos. SVG en línea con atributos y clases, sin `style`: la CSP no
+    admite estilos en línea. Decorativos (aria-hidden): el texto va siempre al lado. -#}
+{% macro glifo(nombre) -%}
+<svg class="glifo" data-glifo="{{ nombre }}" aria-hidden="true" focusable="false" viewBox="0 0 16 16" width="16" height="16">
+{%- if nombre == "punto" %}<circle class="lleno" cx="8" cy="8" r="5"></circle>
+{%- elif nombre == "cuadrado" %}<rect class="lleno" x="3.5" y="3.5" width="9" height="9" rx="1"></rect>
+{%- elif nombre == "espera" %}<circle cx="8" cy="8" r="6"></circle><circle class="lleno" cx="8" cy="8" r="1.5"></circle>
+{%- elif nombre == "medio" %}<circle cx="8" cy="8" r="6"></circle><path class="lleno" d="M8 2a6 6 0 0 1 0 12z"></path>
+{%- elif nombre == "visto" %}<path d="M2.5 8.5l3.5 3.5 7.5-8"></path>
+{%- elif nombre == "cruz" %}<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"></path>
+{%- elif nombre == "reloj" %}<circle cx="8" cy="8" r="6"></circle><path d="M8 4.5V8l2.5 1.5"></path>
+{%- elif nombre == "prohibido" %}<circle cx="8" cy="8" r="6"></circle><path d="M3.8 3.8l8.4 8.4"></path>
+{%- else %}<circle cx="8" cy="8" r="6"></circle><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.3v.2"></path>
+{%- endif %}</svg>
+{%- endmacro %}
+{% macro chip(valor) -%}
+{%- set e = estado(valor) -%}
+<span class="estado estado-{{ valor }}">{{ glifo(e.glifo) }}{{ e.texto }}</span>
+{%- endmacro %}

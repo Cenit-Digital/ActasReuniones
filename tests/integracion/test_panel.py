@@ -1,6 +1,8 @@
 """Rutas del panel con el TestClient de Starlette contra PostgreSQL 18.6 migrado y el rol actas_panel: @a22, @a29, @a30, @a31 y la
 cabecera de usuario de Traefik."""
 
+import re
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -116,7 +118,8 @@ def test_parar_sin_usuario_401_y_nada_escrito(cliente, repo):
 def test_csp_estricta_en_todas_las_respuestas(cliente, ruta, cabeceras):
     r = cliente.get(ruta, headers=cabeceras)
     assert r.headers["content-security-policy"] == (
-        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
+        "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["referrer-policy"] == "same-origin"
@@ -131,10 +134,10 @@ def test_hoja_de_estilo_propia(cliente):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
 
 
-def test_sin_javascript(cliente, repo):
+def test_solo_el_javascript_propio_del_tema(cliente, repo):
     _transcrita(repo, [{"hablante": "sociopruebaa", "inicio_ms": 0, "fin_ms": 1, "texto": "hola"}])
     for ruta in ["/", "/grabar", "/buscar?q=hola"]:
-        assert "<script" not in cliente.get(ruta, headers=USUARIO).text
+        assert re.findall(r"<script[^>]*>", cliente.get(ruta, headers=USUARIO).text) == ['<script src="/tema.js">']
 
 
 # ── Lista y reunión ─────────────────────────────────────────────────────────────────────────────────────────────────────

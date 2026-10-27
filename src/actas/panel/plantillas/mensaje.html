@@ -1,5 +1,9 @@
 {% extends "base.html" %}
+{% block titulo %}Aviso{% endblock %}
 {% block contenido %}
+<section class="tarjeta mensaje" aria-labelledby="t-mensaje">
+<h1 id="t-mensaje">Aviso</h1>
 <p role="status">{{ mensaje }}</p>
 <p><a href="/">Volver a las reuniones</a></p>
+</section>
 {% endblock %}

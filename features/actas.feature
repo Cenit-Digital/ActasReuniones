@@ -73,3 +73,33 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Dado el rol actas_panel
     Cuando intenta un DELETE, un UPDATE de segmentos o un DDL
     Entonces PostgreSQL lo rechaza
+
+  # Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023): el aspecto de transcribir, la misma funcionalidad que F2.
+  Escenario: @a40 tokens de transcribir y solo recursos propios
+    Dado el panel v2
+    Cuando se pide «/», «/reuniones/{id}», «/buscar» o «/grabar»
+    Entonces la página usa los tokens Terracota Clásica, con tema oscuro y claro
+    Y carga solo recursos del propio panel, fuentes incluidas, sin estilos ni scripts en línea
+    Y la CSP lleva script-src 'self' sin unsafe-inline
+
+  Escenario: @a41 accesible en escritorio y en móvil
+    Dado cada pantalla del panel
+    Cuando se audita con axe en 1280 y en 390 px, en tema oscuro y en claro
+    Entonces no hay infracciones WCAG 2.2 AA ni barra de desplazamiento horizontal en la página
+
+  Escenario: @a42 estados con texto y glifo
+    Dado la lista con reuniones en grabando, programada, transcribiendo, transcrita, error y cancelada
+    Cuando se muestra
+    Entonces cada estado se distingue por su texto y su glifo, no solo por el color
+    Y una reunión en error saca un aviso con enlace a su diagnóstico, en su ficha
+
+  Escenario: @a62 enlaces con transcribir, lado del panel
+    Dado una reunión cuyo audio se transcribió en transcribir
+    Cuando transcribir enlaza a «/reuniones?trabajo=<id del trabajo>»
+    Entonces el panel redirige a la ficha de la reunión, o da un 404 claro si ninguna tiene ese trabajo
+    Y la ficha enlaza al trabajo en transcribir
+
+  Escenario: la sonda de vida no depende de las conexiones ociosas
+    Dado conexiones keep-alive ociosas de Traefik con el panel
+    Cuando el kubelet pide «/salud»
+    Entonces responde 200, y el tope de peticiones en curso no cuenta la sonda

@@ -6,7 +6,7 @@ ACTAS_TEXTO_VERSION       la versión del texto informativo de «Grabar»; oblig
 ACTAS_SECRETO_PROXY_FICHERO  fichero con el secreto que la ruta de Traefik añade en X-Actas-Proxy (Secret cifrado con SOPS)
 ACTAS_ORIGEN              el origen del panel para la defensa CSRF (por defecto https://actas.cenitdigital.es)
 ACTAS_PANEL_PUERTO        8080
-ACTAS_PANEL_CONCURRENCIA  16 conexiones HTTP a la vez (uvicorn cuenta también las keep-alive ociosas de Traefik)
+ACTAS_PANEL_CONCURRENCIA  16 peticiones en curso a la vez, sin contar /salud (503 por encima; las cuenta el panel, no uvicorn)
 ACTAS_PANEL_CONEXIONES    4 consultas a la base a la vez, una conexión cada una: por debajo del CONNECTION LIMIT de actas_panel
 
 uvicorn 0.54.0, docs/settings.md: `--no-access-log` («Disable access log only»), `--no-server-header`, `--no-proxy-headers` (el
@@ -43,7 +43,9 @@ def preparar(e: Mapping[str, str]) -> tuple[ASGIApp, Registro]:
     vigente = version_vigente(textos, e.get("ACTAS_TEXTO_VERSION"))
     repo = Repositorio(e["ACTAS_DSN"], ajustes=AJUSTES)
     conexiones = int(e.get("ACTAS_PANEL_CONEXIONES", "4"))
-    app = crear_app(repo, socios, textos, vigente, e.get("ACTAS_ORIGEN", ORIGEN), secreto, registro, conexiones)
+    concurrencia = int(e.get("ACTAS_PANEL_CONCURRENCIA", "16"))
+    origen = e.get("ACTAS_ORIGEN", ORIGEN)
+    app = crear_app(repo, socios, textos, vigente, origen, secreto, registro, conexiones, concurrencia)
     return app, registro
 
 
@@ -55,7 +57,8 @@ def configuracion(app: Any, e: Mapping[str, str]) -> uvicorn.Config:
         access_log=False,
         server_header=False,
         proxy_headers=False,
-        limit_concurrency=int(e.get("ACTAS_PANEL_CONCURRENCIA", "16")),
+        # Sin `limit_concurrency`: cuenta las conexiones keep-alive ociosas y dejaba sin respuesta a la sonda de vida. El tope de
+        # peticiones lo pone el panel (actas.panel._Guardia), sin contar /salud.
         lifespan="off",
     )
 

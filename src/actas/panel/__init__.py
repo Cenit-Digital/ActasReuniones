@@ -7,7 +7,10 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
   para que la contraseña no llegue aquí). Solo se cree si además llega `X-Actas-Proxy` con el secreto que añade otro middleware
   de la misma ruta (el patrón de la consola): la NetworkPolicy no es la única barrera. Sin las dos, 401 y nada se escribe.
 - CSRF: `origen.permitido` antes de leer el formulario de cualquier POST; y `origen.lectura_permitida` para todo (XS-Search).
-- Sin JavaScript y con CSP estricta; sin registro de accesos ni texto de las peticiones en el registro (@a32).
+- CSP estricta (ADR 0023 de KubernetesInfrastructure, D2): solo recursos propios, sin nada en línea; el único JavaScript es
+  `tema.js`, el botón del tema. Sin registro de accesos ni texto de las peticiones en el registro (@a32).
+- Maquetación v2 (V1 de KubernetesInfrastructure#298): los tokens «Terracota Clásica» de transcribir en `estatico/estilo.css`
+  y sus fuentes autoalojadas (SIL OFL 1.1, con sus licencias en `estatico/fuentes/`).
 
 Plantillas: Starlette 1.7.0, docs/templates.md: «When using the `directory` argument, Starlette enables autoescape by default
 for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`»; Jinja2 3.1.6, docs/api.rst: es «a recommended
@@ -42,6 +45,9 @@ AQUI = Path(__file__).resolve().parent
 TEXTOS = AQUI.parent / "textos"
 CABECERA_USUARIO = "x-actas-usuario"
 CABECERA_PROXY = "x-actas-proxy"
+# La ficha del trabajo en transcribir: su web enruta por hash, `#/trabajos/<id>` (PlataformaParaTranscribirAudios,
+# web/src/lib/ruta.ts, `enlace('editor', id)`).
+TRANSCRIBIR = "https://transcribir.cenitdigital.es"
 # Referrer-Policy `same-origin`, en la cabecera y en el <meta> de base.html, y nunca `no-referrer`: Fetch Standard, «append a
 # request `Origin` header», para un POST que no es CORS (un <form method="post"> es "navigate") «switch on request's referrer
 # policy: "no-referrer": Set serializedOrigin to `null`», y `origen.permitido` rechaza `Origin: null` (@a31): era el 403 de
@@ -53,7 +59,10 @@ CABECERA_PROXY = "x-actas-proxy"
 # policy», HTML). Ninguna combinación da `null` en un POST https al mismo origen (tests/unit/test_referrer_panel.py).
 CABECERAS = {
     "content-security-policy": (
-        "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+        # ADR 0023, D2, sin `img-src` ni `connect-src`: nada los usa (los glifos son SVG en línea y no hay fetch), y sin ellos
+        # vale `default-src 'none'`. Los abrirá la fase que los necesite.
+        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
+        "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     ),
     "x-content-type-options": "nosniff",
     "referrer-policy": "same-origin",
@@ -65,6 +74,28 @@ TOPE_CUERPO = 16 * 1024
 TOPE_CAMPOS = 32
 TOPE_LISTA = 100
 RUTAS_SIN_USUARIO = frozenset({"/salud"})
+# Sin datos personales: el navegador los guarda un día (las páginas, no-store). Una imagen nueva los cambia como mucho al día.
+CACHE_ESTATICOS = "private, max-age=86400"
+# Los estáticos, cargados al arrancar: (fichero bajo estatico/, tipo). Nada más se sirve de esa carpeta.
+ESTATICOS = {
+    "/estilo.css": ("estilo.css", "text/css; charset=utf-8"),
+    "/tema.js": ("tema.js", "text/javascript; charset=utf-8"),
+    **{
+        f"/fuentes/{f}": (f"fuentes/{f}", "font/woff2")
+        for f in [
+            "manrope-latin.woff2",
+            "manrope-latin-ext.woff2",
+            "gilda-display-400-latin.woff2",
+            "gilda-display-400-latin-ext.woff2",
+            "jetbrains-mono-latin.woff2",
+            "jetbrains-mono-latin-ext.woff2",
+        ]
+    },
+    **{
+        f"/fuentes/{f}": (f"fuentes/{f}", "text/plain; charset=utf-8")
+        for f in ["OFL-manrope.txt", "OFL-gildadisplay.txt", "OFL-jetbrainsmono.txt"]
+    },
+}
 
 
 def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
@@ -82,19 +113,29 @@ def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
 
 class _Guardia:
     """Delante de todas las rutas: cabeceras de seguridad en cada respuesta, usuario de Traefik, CSRF y tope del cuerpo de los
-    POST, y los errores sin traza (el mensaje de una excepción de la base puede llevar el texto de una fila).
+    POST, tope de peticiones en curso, y los errores sin traza (el mensaje de una excepción de la base puede llevar el texto de
+    una fila).
+
+    El tope cuenta peticiones, no conexiones, y no se aplica a /salud ni a los estáticos (se sirven de memoria al momento, y
+    una página pide nueve a la vez). Era el `limit_concurrency` de uvicorn, que cuenta también
+    las conexiones keep-alive ociosas (protocols/http/h11_impl.py: «len(self.connections) >= self.limit_concurrency» da 503):
+    con 16 abiertas desde Traefik, la sonda de vida recibía 503 y el kubelet paraba el contenedor (el reinicio ordenado de las
+    22:10 UTC del 2026-10-26, KubernetesInfrastructure#287).
 
     Un error en una ruta lo responde el ServerErrorMiddleware de Starlette (500 «Internal Server Error», sin detalle con
     debug=False) y lo vuelve a lanzar «to allow servers to log the error»: aquí se registra solo su tipo y no sigue hasta
     uvicorn, que lo escribiría con su traza. El 500 propio solo sale si el error es anterior a la respuesta de Starlette."""
 
-    def __init__(self, app: ASGIApp, origen: str, secreto: str, registro: Registro) -> None:
-        self.app, self.origen, self.secreto, self.registro = app, origen, secreto, registro
+    def __init__(self, app: ASGIApp, origen: str, secreto: str, registro: Registro, tope: int) -> None:
+        self.app, self.origen, self.secreto, self.registro, self.tope = app, origen, secreto, registro, tope
+        self.en_curso = 0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        estatico = scope["path"] in ESTATICOS
+        libre = estatico or scope["path"] in RUTAS_SIN_USUARIO
         empezada = False
 
         async def enviar(mensaje: Message) -> None:
@@ -104,16 +145,28 @@ class _Guardia:
                 cabeceras = MutableHeaders(scope=mensaje)
                 for k, v in CABECERAS.items():
                     cabeceras[k] = v
+                if estatico and mensaje["status"] == 200:
+                    cabeceras["cache-control"] = CACHE_ESTATICOS
             await send(mensaje)
 
+        cuenta = False
         try:
-            peticion = Request(scope)
-            rechazo = self._rechazo(peticion)
-            await (rechazo or self.app)(scope, receive, enviar)
+            # El tope, después de la autenticación: sin credenciales, 401 aunque esté lleno (y un rechazo no ocupa sitio).
+            rechazo = self._rechazo(Request(scope))
+            if rechazo is None and not libre and self.en_curso >= self.tope:
+                rechazo = PlainTextResponse("Panel ocupado, prueba otra vez", status_code=503, headers={"retry-after": "1"})
+            if rechazo is not None:
+                await rechazo(scope, receive, enviar)
+                return
+            cuenta = not libre
+            self.en_curso += cuenta
+            await self.app(scope, receive, enviar)
         except Exception as e:  # noqa: BLE001 — sin traza ni mensaje: solo el tipo
             self.registro("petición fallida:", type(e).__name__)
             if not empezada:
                 await PlainTextResponse("Error interno", status_code=500)(scope, receive, enviar)
+        finally:
+            self.en_curso -= cuenta
 
     def _rechazo(self, peticion: Request) -> Response | None:
         if peticion.url.path in RUTAS_SIN_USUARIO:
@@ -139,18 +192,27 @@ def crear_app(
     secreto: str,
     registro: Registro,
     conexiones: int = 4,
+    concurrencia: int = 16,
 ) -> ASGIApp:
     """`vigente`: la versión del texto informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente).
     `secreto`: el que añade la ruta de Traefik en X-Actas-Proxy. `conexiones`: consultas a la base a la vez (una conexión cada
-    una), por debajo del CONNECTION LIMIT de actas_panel; el tope de uvicorn cuenta conexiones HTTP, no consultas."""
+    una), por debajo del CONNECTION LIMIT de actas_panel. `concurrencia`: peticiones en curso a la vez, salvo /salud (503 por
+    encima)."""
     if not secreto:
         raise ValueError("falta el secreto de la ruta de Traefik")
     plantillas = Jinja2Templates(directory=AQUI / "plantillas")
-    estilo = (AQUI / "estatico" / "estilo.css").read_bytes()
+    estaticos = {ruta: ((AQUI / "estatico" / f).read_bytes(), tipo) for ruta, (f, tipo) in ESTATICOS.items()}
     texto = presentacion.bloques(textos[vigente])
+
+    plantillas.env.globals["estado"] = presentacion.estado
 
     def pagina(peticion: Request, nombre: str, contexto: dict[str, Any], estado: int = 200) -> Response:
         return plantillas.TemplateResponse(peticion, nombre, contexto, status_code=estado)
+
+    def mensaje(peticion: Request, texto: str, estado: int) -> Response:
+        return pagina(peticion, "mensaje.html", {"mensaje": texto}, estado)
+
+    hablantes = {s: i % 8 for i, s in enumerate(socios)}  # el color de cada socio, como en transcribir (`--hablante-*`)
 
     limitador: list[anyio.CapacityLimiter] = []  # se crea dentro del bucle de eventos, en la primera consulta
 
@@ -162,8 +224,12 @@ def crear_app(
     async def salud(_: Request) -> Response:
         return PlainTextResponse("ok")
 
-    async def hoja(_: Request) -> Response:
-        return Response(estilo, media_type="text/css")
+    async def estatico(peticion: Request) -> Response:
+        cuerpo, tipo = estaticos[peticion.url.path]
+        return Response(cuerpo, headers={"content-type": tipo})
+
+    async def no_existe(peticion: Request, _: Exception) -> Response:
+        return mensaje(peticion, "Esa página no existe.", 404)
 
     async def lista(peticion: Request) -> Response:
         reuniones = await en_hilo(repo.ultimas, TOPE_LISTA)
@@ -179,7 +245,8 @@ def crear_app(
             for r in reuniones
         ]
         activa = await en_hilo(repo.hay_grabacion)
-        return pagina(peticion, "lista.html", {"reuniones": filas, "activa": activa})
+        en_error = [r for r in filas if r["estado"] == "error"]
+        return pagina(peticion, "lista.html", {"reuniones": filas, "activa": activa, "en_error": en_error})
 
     async def reunion(peticion: Request) -> Response:
         rid = peticion.path_params["rid"]
@@ -195,9 +262,21 @@ def crear_app(
             "duracion": presentacion.duracion(r["inicio"], r["fin"]),
             "socios": presentacion.nombres(r["socios"], socios),
             "conformidades": [(presentacion.nombres([s], socios), v) for s, v in conformidades],
-            "segmentos": [(presentacion.hhmmss(ini), presentacion.nombres([h], socios), t) for h, ini, _fin, t in segmentos],
+            "segmentos": [
+                (presentacion.hhmmss(ini), presentacion.nombres([h], socios), hablantes.get(h, 7), t)
+                for h, ini, _fin, t in segmentos
+            ],
+            "transcribir": f"{TRANSCRIBIR}/#/trabajos/{r['trabajo_id']}" if r.get("trabajo_id") else None,
         }
         return pagina(peticion, "reunion.html", contexto)
+
+    async def de_trabajo(peticion: Request) -> Response:
+        """El enlace de vuelta de transcribir (@a62): su web solo sabe el id del trabajo (PlataformaParaTranscribirAudios#19)."""
+        trabajo = peticion.query_params.get("trabajo", "")
+        rid = await en_hilo(repo.reunion_de_trabajo, trabajo) if es_uuid(trabajo) else None
+        if rid is None:
+            return mensaje(peticion, "Ninguna reunión tiene ese trabajo de transcribir.", 404)
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
 
     async def buscar(peticion: Request) -> Response:
         crudo = peticion.query_params.get("q")
@@ -240,13 +319,14 @@ def crear_app(
     async def parar(peticion: Request) -> Response:
         rid = await en_hilo(repo.pedir_parada)
         if rid is None:
-            return pagina(peticion, "mensaje.html", {"mensaje": "No hay ninguna grabación activa."}, 409)
+            return mensaje(peticion, "No hay ninguna grabación activa.", 409)
         return RedirectResponse(f"/reuniones/{rid}", status_code=303)
 
     rutas = [
         Route("/salud", salud),
-        Route("/estilo.css", hoja),
+        *[Route(ruta, estatico) for ruta in ESTATICOS],
         Route("/", lista),
+        Route("/reuniones", de_trabajo),
         Route("/reuniones/{rid}", reunion),
         Route("/buscar", buscar),
         Route("/grabar", ver_grabar, methods=["GET"]),
@@ -255,4 +335,5 @@ def crear_app(
     ]
     # Starlette 1.7.0, docs/requests.md: «To limit the complete request body [...] configure `max_body_size` on the
     # application» (RequestBodyLimitMiddleware: 413, cuente Content-Length o los trozos que lleguen).
-    return _Guardia(Starlette(debug=False, routes=rutas, max_body_size=TOPE_CUERPO), origen, secreto, registro)
+    app = Starlette(debug=False, routes=rutas, max_body_size=TOPE_CUERPO, exception_handlers={404: no_existe})
+    return _Guardia(app, origen, secreto, registro, concurrencia)

@@ -32,14 +32,21 @@ def test_uvicorn_sin_registro_de_accesos_ni_server_ni_proxy(entorno):
     assert c.access_log is False
     assert c.server_header is False
     assert c.proxy_headers is False
-    assert c.limit_concurrency == 16
+    assert c.limit_concurrency is None  # el tope va en el panel y por peticiones: ver test_la_sonda_*
     assert (c.host, c.port) == ("0.0.0.0", 8080)  # noqa: S104 — lo que se comprueba
     assert c.lifespan == "off"
 
 
 def test_uvicorn_configurable(entorno):
-    c = configuracion(object(), {**entorno, "ACTAS_PANEL_PUERTO": "9000", "ACTAS_PANEL_CONCURRENCIA": "20"})
-    assert (c.port, c.limit_concurrency) == (9000, 20)
+    c = configuracion(object(), {**entorno, "ACTAS_PANEL_PUERTO": "9000"})
+    assert c.port == 9000
+
+
+def test_el_tope_de_peticiones_se_configura_como_antes(entorno):
+    app, _ = preparar(entorno)
+    assert app.tope == 16  # type: ignore[attr-defined]
+    app, _ = preparar({**entorno, "ACTAS_PANEL_CONCURRENCIA": "20"})
+    assert app.tope == 20  # type: ignore[attr-defined]
 
 
 def test_preparar_lee_socios_textos_y_origen(entorno):
@@ -163,3 +170,100 @@ def test_como_mucho_n_consultas_a_la_vez():
 
     anyio.run(todas)
     assert vivas["maximo"] == 2
+
+
+# ── Sonda de vida (reinicio del panel a las 22:10 UTC del 2026-10-26, KubernetesInfrastructure#287) ──────────────────────
+# uvicorn 0.4x, protocols/http/h11_impl.py: con `limit_concurrency`, «len(self.connections) >= self.limit_concurrency» da 503
+# a cualquier petición, y una conexión keep-alive ociosa (Traefik las guarda; uvicorn las cierra a los 5 s) cuenta. Con 16
+# ocupadas, la sonda de vida de /salud recibía 503 y, a la tercera, el kubelet paraba el contenedor de forma ordenada.
+
+
+def _servidor(app, entorno):
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        puerto = s.getsockname()[1]
+    cfg = configuracion(app, {**entorno, "ACTAS_PANEL_PUERTO": str(puerto)})
+    cfg.host = "127.0.0.1"
+    srv = uvicorn.Server(cfg)
+    threading.Thread(target=srv.run, daemon=True).start()
+    for _ in range(100):
+        if srv.started:
+            break
+        time.sleep(0.05)
+    return srv, puerto
+
+
+def _ociosa(puerto):
+    import socket
+
+    s = socket.create_connection(("127.0.0.1", puerto))
+    s.sendall(b"GET /salud HTTP/1.1\r\nHost: panel\r\n\r\n")
+    s.recv(1000)
+    return s
+
+
+def test_la_sonda_responde_aunque_haya_conexiones_ociosas(entorno):
+    import urllib.request
+
+    app = crear_app(object(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=4)  # type: ignore[arg-type]
+    srv, puerto = _servidor(app, entorno)
+    ociosas = [_ociosa(puerto) for _ in range(8)]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{puerto}/salud", timeout=5) as r:  # noqa: S310 — local
+            assert (r.status, r.read()) == (200, b"ok")
+    finally:
+        for s in ociosas:
+            s.close()
+        srv.should_exit = True
+
+
+def test_tope_de_peticiones_en_curso_salvo_la_sonda_y_los_estaticos():
+    import threading
+
+    import anyio
+    import httpx2
+
+    soltar = threading.Event()
+    dentro = threading.Semaphore(0)
+
+    class Lenta:
+        def buscar(self, *_):
+            dentro.release()
+            soltar.wait(5)
+            return []
+
+    app = crear_app(Lenta(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=2)  # type: ignore[arg-type]
+    estados: dict[str, int] = {}
+
+    async def todas():
+        cabeceras = {"x-actas-usuario": "panel", "x-actas-proxy": "s"}
+        transporte = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transporte, base_url="https://a.example", headers=cabeceras) as c:
+
+            async def lenta(n):
+                estados[f"lenta{n}"] = (await c.get("/buscar", params={"q": "hola"})).status_code
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(lenta, 1)
+                tg.start_soon(lenta, 2)
+                for _ in range(2):
+                    await anyio.to_thread.run_sync(dentro.acquire)
+                tercera = await c.get("/buscar", params={"q": "hola"})
+                estados["tercera"] = tercera.status_code
+                estados["reintentar"] = int(tercera.headers["retry-after"])
+                estados["salud"] = (await c.get("/salud")).status_code
+                estados["fuente"] = (await c.get("/fuentes/manrope-latin.woff2")).status_code
+                # Sin el secreto de Traefik, 401 aunque el tope esté lleno: la autenticación va antes que el 503.
+                estados["sin_credenciales"] = (await c.get("/buscar", headers={"x-actas-proxy": "otro"})).status_code
+                soltar.set()
+            estados["despues"] = (await c.get("/buscar", params={"q": "hola"})).status_code
+
+    anyio.run(todas)
+    esperados = {"tercera": 503, "reintentar": 1, "salud": 200, "fuente": 200, "sin_credenciales": 401}
+    assert estados == {**esperados, "lenta1": 200, "lenta2": 200, "despues": 200}

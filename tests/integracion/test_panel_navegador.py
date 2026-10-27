@@ -3,46 +3,23 @@ origen» porque `no-referrer` hacía que el navegador mandara `Origin: null`). E
 de mentira; Chromium recibe por CDP las dos cabeceras que pone Traefik, abre la página y envía el formulario. Las cabeceras de
 la petición no se ponen a mano: son las del navegador. `ACTAS_CHROMIUM` = ruta del binario; sin ella, el test se salta."""
 
+import json
+import os
 import socket
 import threading
 import time
-from datetime import datetime
+from pathlib import Path
 
 import pytest
 import uvicorn
+from panel_falso import RIDS, SOCIOS, RepoFalso
 
 from actas.cdp import Cdp
 from actas.panel import crear_app
 from actas.registro import Registro
 
 SECRETO = "secreto-del-proxy"
-RID = "00000000-0000-0000-0000-000000000001"
-
-
-class _Repo:
-    """Lo justo para las tres páginas con formulario POST, y apunta lo que piden «Grabar» y «Parar»."""
-
-    def __init__(self) -> None:
-        self.pedidas: list[tuple[object, str]] = []
-        self.paradas = 0
-
-    def pedir(self, pedida, usuario):
-        self.pedidas.append((pedida, usuario))
-        return RID
-
-    def pedir_parada(self):
-        self.paradas += 1
-        return RID
-
-    def ultimas(self, _limite):
-        return []
-
-    def hay_grabacion(self):
-        return True
-
-    def detalle(self, _rid):
-        r = {"creado_en": datetime(2026, 10, 26, 21, 30), "inicio": None, "fin": None, "estado": "grabando"}
-        return {**r, "motivo": None, "socios": ["pablo"], "pedido_por": "panel"}, [], []
+RID = RIDS["grabando"]
 
 
 @pytest.fixture
@@ -52,8 +29,9 @@ def panel():
         s.bind(("127.0.0.1", 0))
         puerto = s.getsockname()[1]
     origen = f"http://127.0.0.1:{puerto}"
-    repo = _Repo()
-    app = crear_app(repo, {"pablo": "Pablo"}, {"v1": "# Texto"}, "v1", origen, SECRETO, Registro())
+    repo = RepoFalso()
+    textos = {"v1": "# Información\n\nTexto de prueba.\n\n## Qué se graba\n\n- Tu voz.\n- Tus palabras."}
+    app = crear_app(repo, SOCIOS, textos, "v1", origen, SECRETO, Registro())
     posts: list[dict[str, str]] = []
 
     async def espia(scope, receive, send):
@@ -113,6 +91,102 @@ def test_parar_desde_el_navegador(chromium, panel, ruta):
         t, _s = _enviar_formulario(cdp, origen + ruta, "true")
         assert _esperar(lambda: repo.paradas), f"el panel rechazó el POST: Origin {[p.get('origin') for p in posts]}"
         assert posts[0]["origin"] == origen
+        cdp.cerrar_pagina(t)
+    finally:
+        cdp.cerrar()
+
+
+# ── @a41: axe en 1280 y 390 px, en tema oscuro y claro ──────────────────────────────────────────────────────────────────
+
+PANTALLAS = {
+    "lista": "/",
+    "reunion": f"/reuniones/{RIDS['transcrita']}",
+    "reunion-error": f"/reuniones/{RIDS['error']}",
+    "reunion-grabando": f"/reuniones/{RIDS['grabando']}",
+    "buscar": "/buscar?q=presupuesto",
+    "buscar-vacio": "/buscar",
+    "grabar": "/grabar",
+    "no-existe": "/no-existe",
+}
+WCAG_22_AA = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]
+AUDITAR = (
+    f"document.fonts.ready.then(() => axe.run(document, {{runOnly: {{type: 'tag', values: {json.dumps(WCAG_22_AA)}}}}}))"
+    ".then(r => JSON.stringify(r.violations.map(v => ({id: v.id, nodos: v.nodes.map(n => n.target.join(' '))}))))"
+)
+SIN_SCROLL = "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+
+
+@pytest.fixture
+def axe():
+    ruta = os.environ.get("ACTAS_AXE")
+    if not ruta:
+        pytest.skip("sin ACTAS_AXE")
+    return Path(ruta).read_text(encoding="utf-8")
+
+
+def _abrir(cdp, ancho, tema):
+    t = cdp.enviar("Target.createTarget", {"url": "about:blank"})["targetId"]
+    s = cdp.enviar("Target.attachToTarget", {"targetId": t, "flatten": True})["sessionId"]
+    cdp.enviar("Network.enable", sesion=s)
+    cdp.enviar("Network.setExtraHTTPHeaders", {"headers": {"X-Actas-Proxy": SECRETO, "X-Actas-Usuario": "panel"}}, sesion=s)
+    metricas = {"width": ancho, "height": 900, "deviceScaleFactor": 1, "mobile": ancho < 500}
+    cdp.enviar("Emulation.setDeviceMetricsOverride", metricas, sesion=s)
+    cdp.enviar("Emulation.setEmulatedMedia", {"features": [{"name": "prefers-color-scheme", "value": tema}]}, sesion=s)
+    return t, s
+
+
+def _ir(cdp, s, origen, ruta):
+    """Navega y espera, con plazo, a que la página cargada sea la de `ruta` (y no la anterior aún en pantalla)."""
+    cdp.enviar("Page.navigate", {"url": origen + ruta}, sesion=s)
+    cargada = f"location.pathname + location.search === {json.dumps(ruta)} && document.readyState === 'complete'"
+    assert _esperar(lambda: cdp.evaluar(s, cargada)), f"{ruta} no terminó de cargar"
+
+
+def _auditar(cdp, s, axe_js):
+    assert _esperar(lambda: cdp.evaluar(s, "document.readyState === 'complete' && !!document.querySelector('main')"))
+    cdp.evaluar(s, axe_js + "; true", espera=60)
+    infracciones = json.loads(cdp.evaluar(s, AUDITAR, espera=60))
+    return infracciones, cdp.evaluar(s, SIN_SCROLL)
+
+
+@pytest.mark.parametrize("tema", ["dark", "light"])
+@pytest.mark.parametrize("ancho", [1280, 390])
+def test_axe_sin_infracciones_wcag22_aa_ni_scroll_horizontal(chromium, panel, axe, ancho, tema):
+    origen, _repo, _posts = panel
+    cdp = Cdp(chromium, Registro())
+    try:
+        t, s = _abrir(cdp, ancho, tema)
+        assert cdp.evaluar(s, f"matchMedia('(prefers-color-scheme: {tema})').matches") is True
+        for nombre, ruta in PANTALLAS.items():
+            _ir(cdp, s, origen, ruta)
+            infracciones, sin_scroll = _auditar(cdp, s, axe)
+            assert infracciones == [], f"{nombre} ({ancho} px, {tema}): {infracciones}"
+            assert sin_scroll, f"{nombre} ({ancho} px, {tema}): barra de desplazamiento horizontal"
+        # «Grabar» sin marcar a nadie: el 400 con su aviso.
+        _ir(cdp, s, origen, "/grabar")
+        cdp.evaluar(s, "document.querySelector('form[method=post] button[type=submit]').click(); true")
+        assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('[role=alert]')"))
+        infracciones, sin_scroll = _auditar(cdp, s, axe)
+        assert infracciones == [] and sin_scroll, f"grabar con error ({ancho} px, {tema}): {infracciones}"
+        cdp.cerrar_pagina(t)
+    finally:
+        cdp.cerrar()
+
+
+def test_el_tema_elegido_se_recuerda_y_cambia_los_colores(chromium, panel):
+    origen, _repo, _posts = panel
+    cdp = Cdp(chromium, Registro())
+    fondo = "getComputedStyle(document.body).backgroundColor"
+    try:
+        t, s = _abrir(cdp, 1280, "dark")
+        _ir(cdp, s, origen, "/")
+        assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('#tema:not([hidden])')"))
+        assert cdp.evaluar(s, fondo) == "rgb(26, 24, 32)"
+        cdp.evaluar(s, "document.querySelector('#tema').click(); true")
+        assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
+        assert cdp.evaluar(s, "document.querySelector('#tema').getAttribute('aria-pressed')") == "true"
+        _ir(cdp, s, origen, "/grabar")
+        assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
         cdp.cerrar_pagina(t)
     finally:
         cdp.cerrar()

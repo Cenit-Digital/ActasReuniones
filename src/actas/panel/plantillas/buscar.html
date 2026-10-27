@@ -1,19 +1,22 @@
 {% extends "base.html" %}
 {% block titulo %}Buscar{% endblock %}
 {% block contenido %}
+<div class="titular">
+<div>
 <h1>Buscar en las transcripciones</h1>
+{% if not q %}<p class="entradilla">Escribe una o varias palabras en el buscador. Admite «"frase exacta"», «or» y «-palabra».</p>{% endif %}
+</div>
+</div>
 {% if q %}
 {% if hallados %}
-<p>{{ hallados | length }} resultado{% if hallados | length != 1 %}s{% endif %}{% if hallados | length == limite %} (como mucho {{ limite }}){% endif %}.</p>
+<p class="entradilla">{{ hallados | length }} resultado{% if hallados | length != 1 %}s{% endif %}{% if hallados | length == limite %} (como mucho {{ limite }}){% endif %}.</p>
 <ol class="resultados">
 {% for h in hallados %}
-<li><a href="/reuniones/{{ h.id }}">{{ h.fecha }}</a> · <time>{{ h.tiempo }}</time> <strong>{{ h.hablante }}</strong><br>{{ h.fragmento }}</li>
+<li class="tarjeta"><p class="resultado-cabeza"><a href="/reuniones/{{ h.id }}">Reunión del {{ h.fecha }}</a><time class="mono">{{ h.tiempo }}</time><strong>{{ h.hablante }}</strong></p><p>{{ h.fragmento }}</p></li>
 {% endfor %}
 </ol>
 {% else %}
-<p>Sin resultados.</p>
+<p class="vacio tarjeta">Sin resultados.</p>
 {% endif %}
-{% else %}
-<p>Escribe una o varias palabras. Admite «"frase exacta"», «or» y «-palabra».</p>
 {% endif %}
 {% endblock %}

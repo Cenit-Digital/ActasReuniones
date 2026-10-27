@@ -221,3 +221,15 @@ def test_ninguna_conformidad_nueva_para_una_reunion_ya_pedida(request, repo, qui
     with pytest.raises(psycopg.errors.CheckViolation), request.getfixturevalue(quien).conexion() as c:
         c.execute("INSERT INTO conformidades (reunion_id, socio, texto_version) VALUES (%s, 'roberto', 'v1')", (rid,))
     assert repo.conformidades(rid) == [("pablo", "v1")]
+
+
+def test_el_panel_encuentra_la_reunion_de_un_trabajo_de_transcribir(repo_panel, repo):
+    """@a62: el enlace de transcribir trae el id del trabajo, no el de la reunión (`actas.reuniones.trabajo_id`)."""
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    otra = repo.pedir(Peticion(("pablo",), "v1"))
+    trabajo = "11111111-2222-4333-8444-555555555555"
+    for d, h in [(Estado.PEDIDA, Estado.GRABANDO), (Estado.GRABANDO, Estado.GRABADA), (Estado.GRABADA, Estado.TRANSCRIBIENDO)]:
+        repo.mover(rid, d, h, trabajo_id=trabajo if h is Estado.TRANSCRIBIENDO else None)
+    assert repo_panel.reunion_de_trabajo(trabajo) == rid
+    assert repo_panel.reunion_de_trabajo("99999999-2222-4333-8444-555555555555") is None
+    assert otra != rid
