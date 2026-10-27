@@ -66,14 +66,16 @@ def elegir(
 
 
 def mailto(correo: str | None, asunto: str, cuerpo: str) -> str:
-    """RFC 6068: todo en «percent-encoding» (el espacio, %20: un «+» sería literal) y los saltos de línea como CRLF."""
-    destino = urllib.parse.quote(correo, safe="@") if correo else ""
+    """RFC 6068 §5: todo en «percent-encoding» (el espacio, %20: un «+» sería literal) y los saltos de línea como %0D%0A. §2: el
+    `to` es una lista separada por comas y el CHECK de `socios.correo` admite una coma: con ella, el destinatario queda vacío y se
+    pone a mano (una dirección así nunca se parte en dos)."""
+    destino = urllib.parse.quote(correo, safe="@") if correo and "," not in correo else ""
     cuerpo = cuerpo.replace("\r\n", "\n").replace("\n", "\r\n")
     return f"mailto:{destino}?subject={urllib.parse.quote(asunto, safe='')}&body={urllib.parse.quote(cuerpo, safe='')}"
 
 
 def _asunto(fecha: str, que: Collection[str]) -> str:
-    if que >= {"transcripcion", "enlace_sala"}:
+    if {"transcripcion", "enlace_sala"}.issubset(que):
         return f"Reunión del {fecha}: transcripción y enlace a la sala"
     if "transcripcion" in que:
         return f"Transcripción de la reunión del {fecha}"
@@ -106,8 +108,8 @@ def preparar(
         enlace = enlaces[d.push] if "enlace_sala" in que else None
         texto = _texto(d.nombre, fecha, texto_t, enlace)
         url = mailto(d.correo, asunto, texto)
-        completo = len(url) <= MAILTO_MAX
-        if not completo and texto_t is not None:
+        completo = len(url) <= MAILTO_MAX or texto_t is None  # sin transcripción no hay nada que adjuntar
+        if not completo:
             url = mailto(d.correo, asunto, _texto(d.nombre, fecha, _ADJUNTA, enlace))
         mensajes.append(Mensaje(d, asunto, texto, url, completo))
     return mensajes

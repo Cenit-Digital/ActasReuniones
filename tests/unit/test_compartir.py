@@ -122,3 +122,14 @@ def test_elegir_quita_repetidos_y_conserva_el_orden():
         {"transcripcion"},
         ["roberto", "pablo"],
     )
+
+
+def test_un_correo_con_coma_no_se_parte_en_dos_destinatarios():
+    """RFC 6068: el `to` es una lista separada por comas; el CHECK de `socios.correo` admite una coma en la parte local."""
+    assert mailto("a,b@c.es", "x", "y").startswith("mailto:?subject=")
+
+
+def test_sin_transcripcion_el_mailto_nunca_dice_que_se_adjunte():
+    largo = Destinatario("roberto", "R" * 2000, None)
+    (m,) = preparar(FECHA, {"enlace_sala"}, [largo], None, {"roberto": ENLACE})
+    assert m.mailto_completo and "adjunto" not in urllib.parse.unquote(m.mailto)

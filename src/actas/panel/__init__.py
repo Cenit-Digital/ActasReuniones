@@ -356,6 +356,7 @@ def crear_app(
                 sala = await en_hilo(repo.sala, r["sala_id"])
             except KeyError:
                 sala = None
+        datos = await en_hilo(repo.diagnostico, rid)
         contexto = {
             "r": r,
             "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
@@ -369,7 +370,7 @@ def crear_app(
             "transcribir": f"{TRANSCRIBIR}/#/trabajos/{r['trabajo_id']}" if r.get("trabajo_id") else None,
             "sala": sala,
             "consola": CONSOLA,
-            **_diagnostico(r, datos := await en_hilo(repo.diagnostico, rid)),
+            **_diagnostico(r, datos),
         }
         if contexto["diagnostico"]:  # @a60
             contexto["para_claude"] = para_claude.bloque(

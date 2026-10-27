@@ -96,3 +96,24 @@ def test_una_reunion_anterior_al_historial_lo_dice():
 
 def test_cierra_con_la_pregunta_para_claude():
     assert _bloque().rstrip().endswith("¿Qué crees que pasó y qué harías?")
+
+
+def test_un_usuario_con_nombre_de_palabra_comun_no_cambia_el_texto_fijo():
+    r = {**REUNION, "pedido_por": "panel", "reintento_pedido_por": "actas"}
+    b = _bloque(r=r)
+    assert "usuarios del panel como U1" in b and "sistema de actas" in b
+    assert "Pedida por U1" in b and "Reintento pedido por U2: pendiente" in b
+
+
+def test_codigos_cortos_y_nombres_corrientes_no_estropean_el_texto():
+    """Hallazgo de security_reviewer: con socios `a` («Error») y `s1` («Ana»), tachar en el texto daba «S2, S2» y «pistas S1
+    una plataforma». Se comparan valores enteros, no se busca en la prosa."""
+    r = {**REUNION, "socios": ["a", "s1"], "reintento_pedido_en": None}
+    b = bloque(r, [], EVENTOS, diagnosticar(r["motivo"]), comprobaciones(LATIDO, 4.0, 1), {"a": "Error", "s1": "Ana"})
+    assert "Socios: S1, S2" in b
+    assert "envía las pistas a una plataforma" in b and "Pasó a error (plazo_envio)" in b
+
+
+def test_un_reintento_sin_usuario_no_inventa_un_seudonimo():
+    b = _bloque(r={**REUNION, "reintento_pedido_por": None})
+    assert "Reintento pedido por alguien: pendiente" in b and "U2:" not in b

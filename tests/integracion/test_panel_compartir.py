@@ -29,6 +29,11 @@ def repo():
     r = RepoFalso()
     socios = r.socios()
     r.socios = lambda: [{**s, "correo": "roberto@cenitdigital.es"} if s["push"] == "roberto" else s for s in socios]
+
+    def nunca(*_: object) -> None:
+        raise AssertionError("ni Compartir ni la ficha leen la contraseña de la sala")
+
+    r.ver_clave = r.cifrada_de_sala = nunca  # @a58: la contraseña no se lee, así que no puede ir en ningún mensaje
     return r
 
 
@@ -83,6 +88,18 @@ def test_copiar_mensaje_con_la_transcripcion(cliente):
     cuerpo = urllib.parse.unquote(url.split("body=")[1]).replace("\r\n", "\n")
     assert cuerpo == texto  # el mismo contenido
     assert f'href="{TRANSCRITA}/transcripcion.txt"' in r.text
+
+
+def test_una_transcripcion_larga_va_entera_al_copiar_y_adjunta_en_el_mailto(cliente, repo):
+    detalle = repo.detalle
+    largos = [("pablo", i * 1000, i * 1000 + 900, f"Frase número {i} de una reunión larga.") for i in range(200)]
+    repo.detalle = lambda rid: (*detalle(rid)[:2], largos)
+    r = cliente.get(COMPARTIR, params={"que": "transcripcion", "socio": "roberto"}, headers=USUARIO)
+    (texto,) = _areas(r.text).values()
+    assert "Frase número 199" in texto
+    (url,) = _mailtos(r.text)
+    assert "Frase número" not in urllib.parse.unquote(url) and "fichero adjunto" in urllib.parse.unquote(url)
+    assert "adjuntar el .txt" in r.text and f'href="{TRANSCRITA}/transcripcion.txt"' in r.text
 
 
 def test_copiar_mensaje_con_el_enlace_de_la_sala_nunca_lleva_la_contrasena(cliente):
