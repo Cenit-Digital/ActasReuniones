@@ -26,6 +26,8 @@ from actas.formulario import Socio
 from actas.planificador import Programacion
 
 _ESQUEMA = re.compile(r"[a-z][a-z0-9_]{0,30}")
+# Lo programado de una reunión (V3): lo que el supervisor compara al moverla para no actuar sobre datos viejos.
+PROGRAMADO = frozenset({"socios", "sala_id", "texto_version", "tope_min", "programada_para", "espera_min"})
 MIGRACIONES = Path(__file__).resolve().parent / "migraciones"
 
 
@@ -169,11 +171,13 @@ class Repositorio:
         fin: bool = False,
         trabajo_id: str | None = None,
         detalle: Mapping[str, Any] | None = None,
+        igual: Mapping[str, Any] | None = None,
     ) -> None:
-        """`detalle`: lo que se añade al evento del cambio de estado (p. ej., la causa de un error de pistas)."""
+        """`detalle`: lo que se añade al evento del cambio de estado (p. ej., la causa de un error de pistas). `igual`: lo
+        programado que se leyó (`PROGRAMADO`); si el panel lo cambió entretanto, no se mueve (TransicionNoValida)."""
         transicion(desde, hasta)
         with self.conexion() as c:
-            self._mover(c, rid, desde, hasta, motivo, inicio, fin, trabajo_id, detalle)
+            self._mover(c, rid, desde, hasta, motivo, inicio, fin, trabajo_id, detalle, igual)
 
     def _mover(
         self,
@@ -186,19 +190,33 @@ class Repositorio:
         fin: bool = False,
         trabajo_id: str | None = None,
         detalle: Mapping[str, Any] | None = None,
+        igual: Mapping[str, Any] | None = None,
     ) -> None:
         """El cambio de estado y su evento (@a54), en la misma transacción: o los dos, o ninguno. Salir de `error`, por la vía
-        que sea (el panel o `actas.sh reintentar`), consume la petición de «Reintentar» que hubiera."""
+        que sea (el panel o `actas.sh reintentar`), consume la petición de «Reintentar» que hubiera.
+
+        `igual`: las columnas programadas tal como se leyeron. Revisión de seguridad de V3: el panel puede modificar una
+        programada entre la lectura del supervisor y este UPDATE, y no se puede grabar con la sala o los socios de antes. No
+        sirve `actualizado_en` como versión: el panel tiene UPDATE de esa columna (0002)."""
+        if igual and not set(igual) <= PROGRAMADO:
+            raise ValueError("columna no comparable")
+        condicion = sql.SQL("").join(
+            sql.SQL(" AND {} IS NOT DISTINCT FROM {}").format(sql.Identifier(k), sql.Placeholder()) for k in sorted(igual or {})
+        )
         evento = {"desde": desde.value, "hasta": hasta.value, **({"motivo": motivo} if motivo else {}), **(detalle or {})}
         evento = eventos.validar("estado", evento, self._secretos)
-        cur = c.execute(
+        consulta = sql.SQL(
             """UPDATE reuniones SET estado = %s, actualizado_en = now(), motivo = COALESCE(%s, motivo),
                    inicio = CASE WHEN %s THEN now() ELSE inicio END,
                    fin = CASE WHEN %s THEN now() ELSE fin END,
                    trabajo_id = COALESCE(%s, trabajo_id),
                    reintento_pedido_en = CASE WHEN %s THEN NULL ELSE reintento_pedido_en END
-               WHERE id = %s AND estado = %s""",
-            (hasta.value, motivo, inicio, fin, trabajo_id, desde == Estado.ERROR, rid, desde.value),
+               WHERE id = %s AND estado = %s{}"""
+        ).format(condicion)
+        cur = c.execute(
+            consulta,
+            (hasta.value, motivo, inicio, fin, trabajo_id, desde == Estado.ERROR, rid, desde.value)
+            + tuple((igual or {})[k] for k in sorted(igual or {})),
         )
         if cur.rowcount != 1:
             raise TransicionNoValida(f"la reunión no estaba en {desde}")
@@ -384,8 +402,8 @@ class Repositorio:
         """Una reunión en `error` vuelve a `grabada` para enviar otra vez su audio (si aún existe)."""
         try:
             self.mover(rid, Estado.ERROR, Estado.GRABADA, motivo="reintento")
-        except TransicionNoValida:
-            return False
+        except (TransicionNoValida, psycopg.errors.CheckViolation):
+            return False  # CheckViolation: nunca grabó con todas sus conformidades, o está en la papelera
         return True
 
     def anotar_purga(self, rid: str | None, motivo: str, ficheros: int, octetos: int) -> None:

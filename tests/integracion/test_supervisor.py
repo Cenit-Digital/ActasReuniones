@@ -1101,3 +1101,65 @@ def test_la_purga_de_actas_corre_al_arrancar_y_una_vez_al_dia(entorno, repo_pane
     sup.paso()
     with pytest.raises(KeyError):
         repo.reunion(otra)
+
+
+def test_si_se_modifica_al_ir_a_empezar_no_graba_lo_viejo(entorno, monkeypatch):
+    """Revisión de V3: el panel cambia la sala entre la lectura del supervisor y su paso a grabando. No se graba con lo leído:
+    la vuelta siguiente vuelve a leerla."""
+    sup, repo, *_ = entorno
+    rid = _programada(repo)
+    _vence(repo, rid)
+    original = sup.nueva_grabacion
+
+    otra = repo.crear_sala("otra", "roomotra", "abcd", b"\x00" * 40, "pablo")
+
+    def modificar_entre_medias(sala, socios, destino):
+        with repo.conexion() as c:
+            c.execute("UPDATE reuniones SET sala_id = %s WHERE id = %s", (otra, rid))
+        return original(sala, socios, destino)
+
+    monkeypatch.setattr(sup, "nueva_grabacion", modificar_entre_medias)
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "programada" and not GrabacionFalsa.creadas[0].empezada
+    monkeypatch.setattr(sup, "nueva_grabacion", original)
+    sup.paso()
+    assert (repo.reunion(rid)["estado"], repo.reunion(rid)["sala_id"]) == ("grabando", otra)
+
+
+def test_el_tope_propio_tambien_cuenta_en_las_metricas(entorno):
+    sup, repo, plataforma, metricas, reloj, _ = entorno
+    plataforma.respuesta_crear = (503, None)
+    repo.pedir(Peticion(("socioa",), "v1"), tope_min=60)
+    sup.paso()
+    reloj.t += 3600
+    sup.paso()
+    assert metricas.tope_total == 1
+
+
+def test_si_borrar_el_audio_de_una_cancelada_falla_la_vuelta_sigue(entorno, monkeypatch):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = _programada(repo, espera_min=15)
+    _vence(repo, rid)
+    sup.paso()
+    GrabacionFalsa.creadas[0].ver = {"socioa": [], "sociob": []}
+    latidos = []
+    monkeypatch.setattr(sup, "_borrar", lambda *_: (_ for _ in ()).throw(OSError("tmpfs")))
+    monkeypatch.setattr(sup, "_latir", lambda con_audio: latidos.append(con_audio))
+    reloj.t += 16 * 60
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "cancelada" and latidos
+
+
+def test_reintentar_por_actas_sh_una_que_nunca_grabo_no_revienta(repo):
+    from datetime import UTC, datetime, timedelta
+
+    from actas.planificador import Programacion
+
+    sala = repo.crear_sala("r", "roomr", "abcd", b"\x00" * 40, "pablo")
+    p = Programacion("S", sala, datetime.now(UTC) + timedelta(days=1), 60, "no", 15, ("socioa",), "v1")
+    rid = repo.programar(p, "pablo")
+    with repo.conexion() as c:
+        c.execute("DELETE FROM conformidades WHERE reunion_id = %s", (rid,))
+    repo.mover(rid, Estado.PROGRAMADA, Estado.ERROR, motivo="conformidad")
+    assert repo.reintentar(rid) is False
+    assert repo.reunion(rid)["estado"] == "error"

@@ -119,6 +119,39 @@ CREATE TRIGGER reuniones_programacion_congelada
     BEFORE UPDATE ON reuniones
     FOR EACH ROW EXECUTE FUNCTION programacion_congelada();
 
+-- Revisión de seguridad de V3: una reunión no vuelve a `pedida` ni a `programada` (por ahí se podrían reescribir sus
+-- conformidades: el trigger de 0002 y el de arriba admiten las de una pedida recién creada o una programada), y nadie cambia
+-- cuándo se creó (la rama `pedida` del trigger de 0002 compara `creado_en` con now()). actas_app tiene UPDATE de tabla.
+CREATE FUNCTION vida_de_la_reunion() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    IF NEW.estado IS DISTINCT FROM OLD.estado AND NEW.estado IN ('pedida', 'programada') THEN
+        RAISE EXCEPTION 'una reunión no vuelve a pedida ni a programada' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.creado_en IS DISTINCT FROM OLD.creado_en THEN
+        RAISE EXCEPTION 'no se cambia cuándo se creó una reunión' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER reuniones_vida_de_la_reunion
+    BEFORE UPDATE ON reuniones
+    FOR EACH ROW EXECUTE FUNCTION vida_de_la_reunion();
+
+-- Y una conformidad no se cambia nunca, tampoco de reunión (B1 por UPDATE: actas_app tiene UPDATE de tabla por los privilegios
+-- por defecto, y con él podría trasladar las de una reunión pasada a la siguiente de una serie, que nace sin ellas). Se quita
+-- el privilegio y, por si vuelve con otro rol, lo impide un trigger.
+CREATE FUNCTION conformidad_inmutable() RETURNS trigger
+LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
+BEGIN
+    RAISE EXCEPTION 'una conformidad no se cambia' USING ERRCODE = 'check_violation';
+END
+$$;
+CREATE TRIGGER conformidades_inmutables
+    BEFORE UPDATE ON conformidades
+    FOR EACH ROW EXECUTE FUNCTION conformidad_inmutable();
+REVOKE UPDATE ON conformidades FROM actas_app;
+
 -- Una reunión nace `pedida` («Grabar ahora», actas.sh) o `programada` (el panel o la siguiente de una serie): nadie inserta una
 -- ya grabada o transcrita.
 CREATE FUNCTION reunion_nace_pedida_o_programada() RETURNS trigger
@@ -248,16 +281,32 @@ DECLARE
     n integer := 0;
     r record;
 BEGIN
-    FOR r IN SELECT id, papelera_por FROM reuniones WHERE papelera_en < now() - interval '7 days' ORDER BY papelera_en LOOP
+    -- FOR UPDATE: un «Recuperar» a la vez espera y, cuando la purga confirma, ya no la encuentra (revisión de seguridad).
+    FOR r IN SELECT id, papelera_por FROM reuniones WHERE papelera_en < now() - interval '7 days' ORDER BY papelera_en
+             FOR UPDATE LOOP
         n := n + borrar_reunion(r.id, 'papelera_7d', r.papelera_por)::integer;
     END LOOP;
     FOR r IN SELECT id FROM reuniones
              WHERE estado IN ('transcrita', 'error', 'cancelada')
                AND coalesce(fin, programada_para, creado_en) < now() - interval '12 months'
-             ORDER BY creado_en LOOP
+             ORDER BY creado_en FOR UPDATE LOOP
         n := n + borrar_reunion(r.id, 'plazo_12m', NULL)::integer;
     END LOOP;
     RETURN n;
+END
+$$;
+
+-- «Reintentar» (0005) no se pide de una reunión en la papelera: el paso a `grabada` chocaría con su CHECK. CREATE OR REPLACE
+-- conserva el dueño y los privilegios, pero no el search_path fijo: se vuelve a poner abajo.
+CREATE OR REPLACE FUNCTION pedir_reintento(p_reunion uuid, p_usuario text) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+    UPDATE reuniones SET reintento_pedido_en = now(), reintento_pedido_por = p_usuario
+    WHERE id = p_reunion AND estado = 'error' AND reintento_pedido_en IS NULL AND papelera_en IS NULL;
+    IF FOUND THEN
+        RETURN true;
+    END IF;
+    RETURN CASE WHEN EXISTS (SELECT 1 FROM reuniones WHERE id = p_reunion) THEN false END;
 END
 $$;
 
@@ -273,6 +322,11 @@ BEGIN
     EXECUTE format('ALTER FUNCTION recuperar(uuid, text) SET search_path = %I, pg_temp', current_schema());
     EXECUTE format('ALTER FUNCTION borrar_reunion(uuid, text, text) SET search_path = %I, pg_temp', current_schema());
     EXECUTE format('ALTER FUNCTION purgar_actas() SET search_path = %I, pg_temp', current_schema());
+    EXECUTE format('ALTER FUNCTION pedir_reintento(uuid, text) SET search_path = %I, pg_temp', current_schema());
+    -- Defensa en profundidad (revisión de seguridad): ningún rol de aplicación borra ni vacía tablas, ni las de ahora ni si
+    -- unos privilegios por defecto lo dieran. (El comentario de 0001 que dice que actas_app tiene DELETE es antiguo: los del
+    -- inquilino, kubernetes/postgres/inquilinos.sql de KubernetesInfrastructure, nunca lo dieron.)
+    EXECUTE format('REVOKE DELETE, TRUNCATE ON ALL TABLES IN SCHEMA %I FROM actas_app, actas_panel', current_schema());
 END
 $$;
 

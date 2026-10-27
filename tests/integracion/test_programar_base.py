@@ -9,8 +9,9 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 import pytest
 
+from actas.base import PROGRAMADO
 from actas.conformidad import Peticion
-from actas.estados import Estado
+from actas.estados import Estado, TransicionNoValida
 from actas.planificador import MADRID, Programacion
 
 Denegado = (psycopg.errors.InsufficientPrivilege, psycopg.errors.RaiseException, psycopg.errors.CheckViolation)
@@ -328,6 +329,15 @@ def test_a51_eliminar_una_que_no_existe(repo_panel, repo):
     assert repo_panel.recuperar("00000000-0000-4000-8000-0000000000ff", USUARIO) is None
 
 
+def _a_mano(repo, orden, params):
+    """Una fecha de hace tiempo, escrita sin los triggers (la base no deja cambiar `creado_en` ni lo programado de una
+    reunión que ya no está programada)."""
+    with repo.conexion() as c:
+        c.execute("ALTER TABLE reuniones DISABLE TRIGGER USER")
+        c.execute(orden, params)
+        c.execute("ALTER TABLE reuniones ENABLE TRIGGER USER")
+
+
 def _hace(repo, rid, columna, intervalo):
     with repo.conexion() as c:
         c.execute(f"UPDATE reuniones SET {columna} = now() - %s::interval WHERE id = %s", (intervalo, rid))  # noqa: S608
@@ -430,21 +440,16 @@ def test_a52_una_transcripcion_de_mas_de_12_meses_se_borra(repo_app, repo):
 
 def test_a52_la_purga_no_toca_lo_que_esta_en_marcha(repo_app, repo):
     rid = repo.pedir(Peticion(("pablo",), "v1"))
-    with repo.conexion() as c:
-        c.execute("UPDATE reuniones SET creado_en = now() - interval '2 years' WHERE id = %s", (rid,))
+    _a_mano(repo, "UPDATE reuniones SET creado_en = now() - interval '2 years' WHERE id = %s", (rid,))
     assert repo_app.purgar_actas() == 0 and _cuenta(repo, "reuniones", rid) == 1
 
 
 def test_a52_una_cancelada_de_hace_mas_de_12_meses_tambien_se_borra(repo_panel, repo_app, repo):
     rid = repo_panel.programar(_prog(_sala(repo)), USUARIO)
     repo_panel.cancelar(rid, USUARIO)
-    with repo.conexion() as c:
-        c.execute("UPDATE reuniones SET creado_en = now() - interval '13 months' WHERE id = %s", (rid,))
+    _a_mano(repo, "UPDATE reuniones SET creado_en = now() - interval '13 months' WHERE id = %s", (rid,))
     assert repo_app.purgar_actas() == 0  # su fecha es la de programada_para, que es futura
-    with repo.conexion() as c:
-        c.execute("ALTER TABLE reuniones DISABLE TRIGGER USER")
-        c.execute("UPDATE reuniones SET programada_para = now() - interval '13 months' WHERE id = %s", (rid,))
-        c.execute("ALTER TABLE reuniones ENABLE TRIGGER USER")
+    _a_mano(repo, "UPDATE reuniones SET programada_para = now() - interval '13 months' WHERE id = %s", (rid,))
     assert repo_app.purgar_actas() == 1
 
 
@@ -522,3 +527,63 @@ def test_una_serie_cancelada_no_tiene_siguiente(repo_panel, repo):
     rid = repo_panel.programar(_prog(_sala(repo), repetir="mensual"), USUARIO)
     repo_panel.cancelar(rid, USUARIO, serie=True)
     assert repo.series_pendientes() == []
+
+
+# ── Revisión de seguridad de V3 ────────────────────────────────────────────────────────────────────────────────────────
+
+
+def test_el_supervisor_no_traslada_conformidades_con_update(repo_app, repo):
+    """Ni a la siguiente de una serie, que nace sin ellas: B1 también por UPDATE."""
+    vieja = _transcrita(repo)
+    nueva = repo.programar(_prog(_sala(repo), socios=("pablo",)), USUARIO)
+    with repo.conexion() as c:
+        c.execute("DELETE FROM conformidades WHERE reunion_id = %s", (nueva,))
+    with pytest.raises(Denegado), repo_app.conexion() as c:
+        c.execute("UPDATE conformidades SET reunion_id = %s WHERE reunion_id = %s", (nueva, vieja))
+
+
+def test_nadie_cambia_una_conformidad_ni_siendo_el_dueno(repo):
+    rid = _transcrita(repo)
+    with pytest.raises(psycopg.errors.CheckViolation), repo.conexion() as c:
+        c.execute("UPDATE conformidades SET texto_version = 'v2' WHERE reunion_id = %s", (rid,))
+
+
+@pytest.mark.parametrize("estado", ["programada", "pedida"])
+def test_una_reunion_no_vuelve_a_pedida_ni_a_programada(repo_app, repo, estado):
+    rid = repo.programar(_prog(_sala(repo)), USUARIO)
+    repo.mover(rid, Estado.PROGRAMADA, Estado.GRABANDO, inicio=True)
+    repo.mover(rid, Estado.GRABANDO, Estado.GRABADA, motivo="pedida", fin=True)
+    with pytest.raises(Denegado), repo_app.conexion() as c:
+        c.execute("UPDATE reuniones SET estado = %s WHERE id = %s", (estado, rid))
+
+
+def test_nadie_cambia_cuando_se_creo_una_reunion(repo_app, repo):
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    with pytest.raises(Denegado), repo_app.conexion() as c:
+        c.execute("UPDATE reuniones SET creado_en = now() - interval '1 day' WHERE id = %s", (rid,))
+
+
+def test_no_se_pide_reintento_de_una_reunion_en_la_papelera(repo_panel, repo):
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.ERROR, motivo="conformidad")
+    repo_panel.a_papelera(rid, USUARIO)
+    assert repo_panel.pedir_reintento(rid, USUARIO) is False
+
+
+def test_mover_no_toca_una_programada_que_cambio_desde_que_se_leyo(repo):
+    sala, otra = _sala(repo), _sala(repo, "otra")
+    rid = repo.programar(_prog(sala), USUARIO)
+    leida = repo.reunion(rid)
+    repo.modificar_programada(rid, _prog(otra), USUARIO)
+    with pytest.raises(TransicionNoValida):
+        repo.mover(rid, Estado.PROGRAMADA, Estado.GRABANDO, inicio=True, igual={k: leida[k] for k in PROGRAMADO})
+    assert repo.reunion(rid)["estado"] == "programada"
+    actual = repo.reunion(rid)
+    repo.mover(rid, Estado.PROGRAMADA, Estado.GRABANDO, inicio=True, igual={k: actual[k] for k in PROGRAMADO})
+    assert repo.reunion(rid)["estado"] == "grabando"
+
+
+def test_mover_solo_compara_lo_programado(repo):
+    rid = repo.pedir(Peticion(("pablo",), "v1"))
+    with pytest.raises(ValueError):
+        repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO, igual={"estado": "pedida"})

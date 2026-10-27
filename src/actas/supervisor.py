@@ -34,7 +34,7 @@ from typing import Any, Protocol
 import psycopg
 
 from actas.aviso import sin_coincidencia
-from actas.base import Repositorio
+from actas.base import PROGRAMADO, Repositorio
 from actas.conformidad import ConformidadNoValida, validar
 from actas.estados import TOPE_GRABACION_S, Estado, TransicionNoValida, motivo_parada, nadie_entro
 from actas.metricas import Metricas
@@ -144,12 +144,12 @@ class Supervisor:
     # ── Una vuelta ────────────────────────────────────────────────────────────────────────────────────────────────────
 
     def paso(self) -> None:
-        self._caducar_programadas()
+        vencidas = self._caducar_programadas()
         if self.activa:
             self._vigilar()
         else:
             self._recuperar_huerfanas()
-            self._atender_pedida()
+            self._atender_siguiente(vencidas)
         self._crear_siguientes()
         self._atender_reintentos()
         for r in self.repo.en_estado(Estado.GRABADA):
@@ -186,40 +186,45 @@ class Supervisor:
             self.metricas.sumar("errores_total")
             self.log("reunión sin grabador recuperada")
 
-    def _caducar_programadas(self) -> None:
-        """@a48: una programada que pasada su espera no pudo empezar ya no se graba (`no_empezo`); la hora es la de la base."""
-        for r in self.repo.vencidas():
+    def _caducar_programadas(self) -> list[dict[str, Any]]:
+        """@a48: una programada que pasada su espera no pudo empezar ya no se graba (`no_empezo`); la hora es la de la base.
+        Devuelve las vencidas que siguen a tiempo, para no volver a pedirlas en la misma vuelta."""
+        vencidas = self.repo.vencidas()
+        for r in vencidas:
             if decidir(r["retraso_s"], r["espera_min"]) == "tarde":
-                self._error(r["id"], Estado.PROGRAMADA, "no_empezo")
+                self._error(r["id"], Estado.PROGRAMADA, "no_empezo", igual=_programado(r))
+        return [r for r in vencidas if decidir(r["retraso_s"], r["espera_min"]) != "tarde"]
 
-    def _atender_pedida(self) -> None:
-        """La `pedida` más antigua («Grabar ahora» o actas.sh) o, si no hay, la programada cuya hora llegó (@a48)."""
+    def _atender_siguiente(self, vencidas: list[dict[str, Any]]) -> None:
+        """La `pedida` más antigua («Grabar ahora» o actas.sh) o, si no hay, la programada cuya hora llegó (@a48). Una
+        programada solo se mueve si lo programado sigue como se leyó (el panel puede modificarla entretanto)."""
         r, desde = self.repo.siguiente(Estado.PEDIDA), Estado.PEDIDA
         if r is None:
-            vencidas = [v for v in self.repo.vencidas() if decidir(v["retraso_s"], v["espera_min"]) == "empezar"]
-            if not vencidas:
+            a_tiempo = [v for v in vencidas if decidir(v["retraso_s"], v["espera_min"]) == "empezar"]
+            if not a_tiempo:
                 return
-            r, desde = vencidas[0], Estado.PROGRAMADA
+            r, desde = a_tiempo[0], Estado.PROGRAMADA
+        igual = _programado(r) if desde == Estado.PROGRAMADA else None
         try:
             peticion = validar(list(r["socios"]), r["texto_version"])
         except ConformidadNoValida:
-            self._error(r["id"], desde, "conformidad")
+            self._error(r["id"], desde, "conformidad", igual=igual)
             return
         # @a6: cada socio con su fila de conformidad de esta reunión y de la misma versión del texto informativo. En una
         # programada, la de todos sus socios (Pablo, 2026-10-27): la siguiente de una serie nace sin ninguna.
         if self.repo.conformidades(r["id"]) != [(s, peticion.version) for s in peticion.socios]:
-            self._error(r["id"], desde, "conformidad")
+            self._error(r["id"], desde, "conformidad", igual=igual)
             return
         # @a46: la sala de esta reunión, nunca la de otra. Sin sala o sin poder descifrarla, no se graba.
         try:
             sala = self.sala_de(r)
         except SalaNoDisponible as e:
             self.log("no se graba:", str(e))
-            self._error(r["id"], desde, "sala")
+            self._error(r["id"], desde, "sala", igual=igual)
             return
         grabador = self.nueva_grabacion(sala, peticion.socios, self.raiz / r["id"])
         try:
-            self.repo.mover(r["id"], desde, Estado.GRABANDO, inicio=True, detalle={"socios": len(peticion.socios)})
+            self.repo.mover(r["id"], desde, Estado.GRABANDO, inicio=True, detalle={"socios": len(peticion.socios)}, igual=igual)
         except TransicionNoValida:
             return
         try:
@@ -247,7 +252,7 @@ class Supervisor:
             motivo = "grabador_caido"
             self.metricas.sumar("errores_total")
         if motivo:
-            if motivo == "tope_3h":
+            if motivo in ("tope_3h", "tope"):
                 self.metricas.sumar("tope_total")
             self._parar(motivo)
             return
@@ -295,7 +300,10 @@ class Supervisor:
         self.metricas.socios_esperados = self.metricas.socios_vistos = 0
         self.log("grabación parada:", a.parada)
         if a.parada == "nadie_entro":
-            self._borrar(a.rid, "nadie_entro")
+            try:
+                self._borrar(a.rid, "nadie_entro")
+            except Exception as e:  # noqa: BLE001 — la purga de cada hora borra el audio de una cancelada
+                self.log("no se pudo borrar el audio de una reunión cancelada:", type(e).__name__)
 
     # ── Series y purga de las reuniones (V3) ──────────────────────────────────────────────────────────────────────────
 
@@ -471,9 +479,16 @@ class Supervisor:
 
     # ── Errores y purga (sigue) ───────────────────────────────────────────────────────────────────────────────────────
 
-    def _error(self, rid: str, desde: Estado, motivo: str, detalle: dict[str, Any] | None = None) -> None:
+    def _error(
+        self,
+        rid: str,
+        desde: Estado,
+        motivo: str,
+        detalle: dict[str, Any] | None = None,
+        igual: dict[str, Any] | None = None,
+    ) -> None:
         try:
-            self.repo.mover(rid, desde, Estado.ERROR, motivo=motivo, detalle=detalle)
+            self.repo.mover(rid, desde, Estado.ERROR, motivo=motivo, detalle=detalle, igual=igual)
         except TransicionNoValida:
             return
         self.metricas.sumar("errores_total")
@@ -537,6 +552,10 @@ class Supervisor:
                 self.log("audio borrado:", motivo)
             except Exception as ex:  # noqa: BLE001
                 self.log("no se pudo borrar una entrada del tmpfs:", type(ex).__name__)
+
+
+def _programado(r: dict[str, Any]) -> dict[str, Any]:
+    return {k: r.get(k) for k in PROGRAMADO}
 
 
 def _es_reunion(nombre: str) -> bool:
