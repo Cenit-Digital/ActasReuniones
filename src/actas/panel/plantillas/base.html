@@ -9,6 +9,7 @@
 <title>{% block titulo %}Actas{% endblock %} · Cenit Digital</title>
 <link rel="stylesheet" href="/estilo.css">
 <script src="/tema.js"></script>
+<script src="/copiar.js" defer></script>
 </head>
 <body>
 <a class="saltar" href="#contenido">Saltar al contenido</a>
@@ -17,6 +18,7 @@
 <a class="marca" href="/">Actas</a>
 <nav class="secciones" aria-label="Secciones">
 <a href="/"{% if seccion == "reuniones" %} aria-current="page"{% endif %}>Reuniones</a>
+<a href="/salas"{% if seccion == "salas" %} aria-current="page"{% endif %}>Salas y socios</a>
 <a href="https://transcribir.cenitdigital.es/#/actas" rel="noopener noreferrer">Transcribir<span aria-hidden="true"> ↗</span></a>
 </nav>
 <form class="buscador" method="get" action="/buscar" role="search">

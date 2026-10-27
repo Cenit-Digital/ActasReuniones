@@ -45,6 +45,7 @@
 <dt>Estado</dt><dd>{{ chip(r.estado) }}{% if r.motivo %} <span class="mono">{{ r.motivo }}</span>{% endif %}</dd>
 <dt>Duración</dt><dd class="mono">{{ duracion }}</dd>
 <dt>Socios</dt><dd>{{ socios }}</dd>
+<dt>Sala</dt><dd>{% if sala %}<a href="/salas/{{ sala.id }}">{{ sala.nombre }}</a>{% else %}<span class="detalle">sin sala</span>{% endif %}</dd>
 <dt>Pedida por</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
 </dl>
 </section>

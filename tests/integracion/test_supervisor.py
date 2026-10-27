@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from actas import salas
 from actas.conformidad import Peticion
 from actas.estados import TOPE_GRABACION_S, Estado
+from actas.grabador import Sala, sala_de_reunion
 from actas.metricas import Metricas
 from actas.purga import PLAZO_AUDIO_S
 from actas.registro import Registro
@@ -87,7 +89,8 @@ def entorno(repo, tmp_path):
     sup = Supervisor(
         repo=repo,
         plataforma=plataforma,
-        nueva_grabacion=lambda socios, destino: GrabacionFalsa(socios, destino),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, socios, destino: GrabacionFalsa(socios, destino),
         raiz=tmp_path,
         registro=Registro(),
         metricas=metricas,
@@ -352,7 +355,8 @@ def test_401_no_deja_el_token_en_el_registro(repo, tmp_path, capsys):
     sup = Supervisor(
         repo=repo,
         plataforma=plataforma,
-        nueva_grabacion=lambda s, d: GrabacionFalsa(s, d),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
         raiz=tmp_path,
         registro=Registro(["tok3n-secreto"]),
         metricas=Metricas(),
@@ -426,7 +430,8 @@ def test_si_la_base_falla_al_parar_se_reintenta_y_no_se_atasca(repo, tmp_path):
     sup = Supervisor(
         repo=envuelto,
         plataforma=plataforma,
-        nueva_grabacion=lambda s, d: GrabacionFalsa(s, d),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
         raiz=tmp_path,
         registro=Registro(),
         metricas=Metricas(),
@@ -466,7 +471,8 @@ def test_al_arrancar_se_rescata_la_grabacion_en_curso(entorno):
     otro = Supervisor(
         repo=repo,
         plataforma=plataforma,
-        nueva_grabacion=lambda s, d: GrabacionFalsa(s, d),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
         raiz=raiz,
         registro=Registro(),
         metricas=Metricas(),
@@ -498,7 +504,8 @@ def test_un_fallo_pasajero_de_la_base_al_guardar_no_pierde_la_transcripcion(repo
     sup = Supervisor(
         repo=envuelto,
         plataforma=plataforma,
-        nueva_grabacion=lambda s, d: GrabacionFalsa(s, d),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
         raiz=tmp_path,
         registro=Registro(),
         metricas=Metricas(),
@@ -526,3 +533,101 @@ def test_ocupacion_del_tmpfs_en_las_metricas(entorno):
     repo.pedir_parada()
     sup.paso()  # la falsa deja un fichero de 4 bytes
     assert metricas.grabaciones_bytes == 4
+
+
+# ── @a46: la sala de cada reunión (V2 de KubernetesInfrastructure#298) ───────────────────────────────────────────────
+
+MAESTRA = bytes(range(32))
+
+
+def _con_salas(repo, tmp_path, maestra=MAESTRA):
+    GrabacionFalsa.creadas = []
+    registro = Registro()
+    salas_usadas = []
+
+    def nueva(sala, socios, destino):
+        salas_usadas.append(sala)
+        return GrabacionFalsa(socios, destino)
+
+    sup = Supervisor(
+        repo=repo,
+        plataforma=PlataformaFalsa(),
+        sala_de=lambda r: sala_de_reunion(r, repo.cifrada_de_sala, maestra, registro),
+        nueva_grabacion=nueva,
+        raiz=tmp_path,
+        registro=registro,
+        metricas=Metricas(),
+        reloj=Reloj(),
+    )
+    return sup, salas_usadas, registro
+
+
+def _sala_en_la_base(repo, room="salav2abc", clave="k7m2p9qx4tz8wb3n"):
+    return repo.crear_sala(f"Sala {room}", room, "3931", salas.cifrar(MAESTRA, room, clave), "pablo")
+
+
+def test_el_supervisor_graba_en_la_sala_de_la_reunion_y_no_en_la_del_entorno(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("SALA", "saladelentorno")
+    monkeypatch.setenv("CLAVE", "clavedelentorno")
+    sup, usadas, _ = _con_salas(repo, tmp_path)
+    sid = _sala_en_la_base(repo)
+    rid = repo.pedir(Peticion(("socioa",), "v1"), sala_id=sid)
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabando"
+    assert usadas == [Sala("salav2abc", "k7m2p9qx4tz8wb3n")]
+    assert "saladelentorno" not in usadas[0].url("socioa") and "clavedelentorno" not in usadas[0].url("socioa")
+
+
+def test_cada_reunion_con_su_sala(repo, tmp_path):
+    sup, usadas, _ = _con_salas(repo, tmp_path)
+    s1, s2 = _sala_en_la_base(repo, "salauno", "claveuno"), _sala_en_la_base(repo, "salados", "clavedos")
+    for sid in (s1, s2):
+        repo.pedir(Peticion(("socioa",), "v1"), sala_id=sid)
+        sup.paso()
+        repo.pedir_parada()
+        sup.paso()
+    assert [(s.nombre, s.clave) for s in usadas] == [("salauno", "claveuno"), ("salados", "clavedos")]
+
+
+def test_una_reunion_sin_sala_no_se_graba(repo, tmp_path):
+    sup, usadas, _ = _con_salas(repo, tmp_path)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["motivo"]) == ("error", "sala")
+    assert usadas == [] and GrabacionFalsa.creadas == []
+
+
+def test_una_sala_que_no_se_descifra_no_se_graba(repo, tmp_path):
+    sup, usadas, _ = _con_salas(repo, tmp_path, maestra=bytes(range(1, 33)))
+    rid = repo.pedir(Peticion(("socioa",), "v1"), sala_id=_sala_en_la_base(repo))
+    sup.paso()
+    assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("error", "sala")
+    assert usadas == []
+
+
+def test_la_contrasena_descifrada_no_llega_al_registro(repo, tmp_path, capsys):
+    sup, _, registro = _con_salas(repo, tmp_path)
+    repo.pedir(Peticion(("socioa",), "v1"), sala_id=_sala_en_la_base(repo))
+    sup.paso()
+    registro("una línea con k7m2p9qx4tz8wb3n dentro")
+    err = capsys.readouterr().err
+    assert "k7m2p9qx4tz8wb3n" not in err and "***" in err
+
+
+def test_al_arrancar_rescata_con_la_sala_de_la_reunion(repo, tmp_path):
+    sup, usadas, _ = _con_salas(repo, tmp_path)
+    rid = repo.pedir(Peticion(("socioa",), "v1"), sala_id=_sala_en_la_base(repo))
+    repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO)
+    sup.arrancar()
+    assert usadas == [Sala("salav2abc", "k7m2p9qx4tz8wb3n")] and GrabacionFalsa.creadas[0].reanudada
+    assert repo.reunion(rid)["estado"] == "grabada"
+
+
+def test_al_arrancar_sin_sala_la_reunion_pasa_igual_a_grabada(repo, tmp_path):
+    sup, usadas, _ = _con_salas(repo, tmp_path)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO)
+    sup.arrancar()
+    assert usadas == []
+    assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "reinicio_supervisor")

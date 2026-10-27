@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% set seccion = "salas" %}
+{% block titulo %}Mostrar la contraseña{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/salas">Salas y socios</a> <span aria-hidden="true">/</span> <a href="/salas/{{ sala.id }}">{{ sala.nombre }}</a> <span aria-hidden="true">/</span> Contraseña</nav>
+<form method="post" action="/salas/{{ sala.id }}/clave" class="tarjeta formulario">
+<h1>¿Mostrar la contraseña de «{{ sala.nombre }}»?</h1>
+<p>Verla o copiarla queda anotado en el historial de la sala (quién y cuándo, nunca su valor).</p>
+<p>Envíala a los socios por un canal distinto del de su enlace: el enlace no lleva la contraseña.</p>
+<div class="acciones">
+<button class="boton boton-primario" type="submit">Mostrar la contraseña</button>
+<a class="boton" href="/salas/{{ sala.id }}">Cancelar</a>
+</div>
+</form>
+{% endblock %}

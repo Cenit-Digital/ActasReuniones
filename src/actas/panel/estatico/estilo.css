@@ -325,7 +325,9 @@ mark {
   border-color: var(--error);
   color: var(--error);
 }
-input[type='search'] {
+input[type='search'],
+input[type='text'],
+input[type='email'] {
   min-height: 44px;
   min-width: 0;
   padding: 0 14px;
@@ -335,11 +337,13 @@ input[type='search'] {
   color: var(--text);
   font: 15px Manrope, system-ui, sans-serif;
 }
-input[type='search']::placeholder {
+input[type='search']::placeholder,
+input[type='text']::placeholder {
   color: var(--muted);
   opacity: 1;
 }
-input[type='checkbox'] {
+input[type='checkbox'],
+input[type='radio'] {
   width: 20px;
   height: 20px;
   margin: 0;
@@ -498,6 +502,7 @@ main {
 
 /* ── Lista ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 .tabla {
+  position: relative; /* el texto .oculto de una celda (absoluto) se queda dentro del desplazamiento de la tabla */
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -703,6 +708,77 @@ legend {
 .opcion:has(input:checked) {
   border-color: var(--accent-dark);
   background: var(--accent-soft);
+}
+/* ── Salas y socios (V2) ─────────────────────────────────────────────────────────────────────────────────────────────── */
+section > h2 {
+  margin: 24px 0 12px;
+}
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+.formulario h1,
+.formulario h3,
+.formulario p {
+  margin: 0;
+}
+.campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.campo label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.campo .detalle {
+  margin: 0;
+  font-size: 13px;
+}
+.en-linea {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.enlaces {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.copiable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg);
+}
+.copiable strong {
+  flex: 0 0 110px;
+}
+.copiable code {
+  flex: 1 1 320px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+#clave {
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: 0.08em;
 }
 .mensaje h1 {
   margin-bottom: 12px;

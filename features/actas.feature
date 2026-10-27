@@ -47,10 +47,11 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Y el resaltado sale escapado: un segmento con <script> se muestra como texto
 
   Escenario: @a29 grabar desde el panel
-    Dado el formulario «Grabar» con una casilla por socio conocido y la versión del texto informativo
-    Cuando se envía sin socios, con un streamID que no es de un socio conocido o con otra versión
+    Dado el formulario «Grabar» con las salas, una casilla por socio activo y la versión del texto informativo
+    Cuando se envía sin sala, sin socios, con un streamID que no es de un socio activo o con otra versión
     Entonces responde 400 y no hay ninguna fila nueva
-    Pero con socios válidos se crea la reunión pedida, una conformidad por socio y pedido_por con el usuario de BasicAuth
+    Pero con sala y socios válidos se crea la reunión pedida en esa sala, una conformidad por socio y pedido_por con el usuario
+      de BasicAuth
 
   Escenario: @a30 parar desde el panel
     Dado una reunión grabando
@@ -71,7 +72,7 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
 
   Escenario: @a33 mínimo privilegio del panel en la base
     Dado el rol actas_panel
-    Cuando intenta un DELETE, un UPDATE de segmentos o un DDL
+    Cuando intenta un DELETE, un UPDATE de segmentos, salas, socios o su auditoría, o un DDL
     Entonces PostgreSQL lo rechaza
 
   # Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023): el aspecto de transcribir, la misma funcionalidad que F2.
@@ -98,6 +99,37 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Cuando transcribir enlaza a «/reuniones?trabajo=<id del trabajo>»
     Entonces el panel redirige a la ficha de la reunión, o da un 404 claro si ninguna tiene ese trabajo
     Y la ficha enlaza al trabajo en transcribir
+
+  # Salas, socios y enlaces (V2 de KubernetesInfrastructure#298, ADR 0023 decisiones 3 y 4).
+  Escenario: @a43 crear una sala
+    Dado «Crear sala nueva» en el panel
+    Cuando Pablo la confirma
+    Entonces se guarda una sala con room y contraseña aleatorias
+    Y la contraseña queda cifrada con AES-GCM: el valor en claro no aparece en la base y descifrarla con otra clave falla
+
+  Escenario: @a44 enlace de cada socio
+    Dado una sala y un socio activo
+    Cuando se pide su enlace
+    Entonces lleva room, hash (el de analisis.hash_sala de F0), push y label
+    Y no lleva la contraseña
+
+  Escenario: @a45 mostrar o copiar la contraseña
+    Dado la ficha de una sala, con la contraseña oculta
+    Cuando Pablo confirma «Mostrar»
+    Entonces aparece la contraseña, con su botón «Copiar»
+    Y la base anota clave_vista con el usuario y la sala, sin el valor, antes de dar la contraseña cifrada
+    Pero el panel no puede leer la contraseña cifrada de ninguna otra forma
+
+  Escenario: @a46 el supervisor graba en la sala de la reunión
+    Dado una reunión pedida con su sala
+    Cuando el supervisor la arranca
+    Entonces abre las páginas espectadoras con la sala y la contraseña de esa reunión, no con SALA ni CLAVE del entorno
+    Pero una reunión sin sala, o con una sala que no se descifra, pasa a error con el motivo «sala»
+
+  Escenario: @a47 alta de socios sin guiones
+    Dado «Salas y socios»
+    Cuando Pablo da de alta un socio con un push con guiones
+    Entonces el panel lo rechaza y la base también, y no hay ninguna fila nueva
 
   Escenario: la sonda de vida no depende de las conexiones ociosas
     Dado conexiones keep-alive ociosas de Traefik con el panel

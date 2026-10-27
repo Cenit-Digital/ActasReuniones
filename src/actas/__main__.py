@@ -7,7 +7,9 @@ ACTAS_PLATAFORMA           http://transcribir-api.transcribir.svc.cluster.local:
 ACTAS_CDP                  http://127.0.0.1:9222 (el Chromium del contenedor `chromium`)
 ACTAS_GRABACIONES          /grabaciones (tmpfs compartido con `chromium`)
 ACTAS_PUERTO_METRICAS      9101
-SALA, CLAVE, SALT          la sala (Secret cifrado con SOPS)
+ACTAS_SALAS_CLAVE_FICHERO  fichero con la clave de las contraseñas de las salas, 32 bytes en base64 (Secret `actas-salas-clave`,
+                           SOPS). Cada reunión se graba en su sala (V2 de KubernetesInfrastructure#298, @a46); `SALA`, `CLAVE` y
+                           `SALT` (el `envFrom` `actas-sala` de antes) ya no se leen.
 """
 
 import os
@@ -19,10 +21,12 @@ from pathlib import Path
 
 from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium
-from actas.grabador import Grabacion, Sala
+from actas.enlaces import BASE
+from actas.grabador import Grabacion, Sala, sala_de_reunion
 from actas.metricas import Metricas, servir
 from actas.plataforma import Plataforma
 from actas.registro import Registro
+from actas.salas import clave_maestra
 from actas.supervisor import Supervisor
 
 VUELTA_S = 5
@@ -68,13 +72,13 @@ class _GrabacionConCdp:
             self._g.cdp.cerrar()
 
 
-def cerrar_paginas_de_sala(cdp_url: str, sala: Sala, registro: Registro) -> None:
-    """Al arrancar, tras el rescate: cierra las páginas de la sala que aún queden abiertas (seguirían grabando) y deniega las
-    descargas hasta la próxima grabación."""
+def cerrar_paginas_de_sala(cdp_url: str, registro: Registro, base: str = BASE) -> None:
+    """Al arrancar, tras el rescate: cierra las páginas de VDO.Ninja que aún queden abiertas, de cualquier sala (seguirían
+    grabando), y deniega las descargas hasta la próxima grabación."""
     cdp = Cdp(cdp_url, registro)  # sin Chromium no se sigue: podría haber páginas grabando sin control
     try:
         for t in cdp.enviar("Target.getTargets")["targetInfos"]:
-            if t.get("type") == "page" and str(t.get("url", "")).startswith(sala.base):
+            if t.get("type") == "page" and str(t.get("url", "")).startswith(base):
                 cdp.cerrar_pagina(t["targetId"])
                 registro("cerrada una página de un supervisor anterior")
         cdp.enviar("Browser.setDownloadBehavior", {"behavior": "deny"})
@@ -82,23 +86,30 @@ def cerrar_paginas_de_sala(cdp_url: str, sala: Sala, registro: Registro) -> None
         cdp.cerrar()
 
 
-def registro_del_entorno(e: Mapping[str, str], token: str) -> Registro:
-    """El registro del proceso, que redacta la contraseña de la sala, el token y las contraseñas de la base."""
-    return Registro([e.get("CLAVE", ""), token, e.get("PGPASSWORD", ""), e.get("ACTAS_MIGRACIONES_PASSWORD", "")])
+def registro_del_entorno(e: Mapping[str, str], token: str, maestra: str = "") -> Registro:
+    """El registro del proceso, que redacta el token, las contraseñas de la base y la clave de las salas; y `CLAVE` mientras
+    el `envFrom` `actas-sala` siga en el pod (hasta el segundo PR de despliegue de V2). Las contraseñas de las salas se añaden
+    al descifrarlas (grabador.sala_de_reunion)."""
+    return Registro(
+        [e.get("CLAVE", ""), token, e.get("PGPASSWORD", ""), e.get("ACTAS_MIGRACIONES_PASSWORD", ""), maestra.strip()]
+    )
 
 
 def main() -> None:
     e = os.environ
     token = Path(e["ACTAS_TOKEN_FICHERO"]).read_text(encoding="utf-8").strip()
-    sala = Sala.del_entorno()
-    registro = registro_del_entorno(e, token)
+    texto_maestra = Path(e["ACTAS_SALAS_CLAVE_FICHERO"]).read_text(encoding="utf-8")
+    maestra = clave_maestra(texto_maestra)
+    registro = registro_del_entorno(e, token, texto_maestra)
+    repo = Repositorio(e["ACTAS_DSN"])
     metricas = Metricas()
     servir(metricas, int(e.get("ACTAS_PUERTO_METRICAS", "9101")))
     cdp_url = e.get("ACTAS_CDP", "http://127.0.0.1:9222")
     sup = Supervisor(
-        repo=Repositorio(e["ACTAS_DSN"]),
+        repo=repo,
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
-        nueva_grabacion=lambda socios, destino: _GrabacionConCdp(cdp_url, sala, socios, destino, registro),
+        sala_de=lambda r: sala_de_reunion(r, repo.cifrada_de_sala, maestra, registro),
+        nueva_grabacion=lambda sala, socios, destino: _GrabacionConCdp(cdp_url, sala, socios, destino, registro),
         raiz=Path(e.get("ACTAS_GRABACIONES", "/grabaciones")),
         registro=registro,
         metricas=metricas,
@@ -110,7 +121,7 @@ def main() -> None:
     # responde en 5 min, el proceso sale y el contenedor se reinicia; avisa ActasSupervisorParado).
     esperar_chromium(cdp_url)
     sup.arrancar()  # rescata la grabación en curso, si la había, antes de cerrar lo que sobre
-    cerrar_paginas_de_sala(cdp_url, sala, registro)
+    cerrar_paginas_de_sala(cdp_url, registro)
     registro("supervisor en marcha")
     while not fin.is_set():
         try:

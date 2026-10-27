@@ -29,6 +29,14 @@ def dsn():
             "CREATE ROLE actas_panel LOGIN NOINHERIT PASSWORD 'pruebas'; END IF; END $$"
         )
         c.execute(f"CREATE SCHEMA {esquema}")
+        # El rol del supervisor y los privilegios por defecto del inquilino, como en KubernetesInfrastructure
+        # (kubernetes/postgres/inquilinos.sql): lo que crea el dueño del esquema llega a actas_app con SELECT, INSERT y UPDATE.
+        c.execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'actas_app') THEN "
+            "CREATE ROLE actas_app LOGIN NOINHERIT PASSWORD 'pruebas'; END IF; END $$"
+        )
+        c.execute(f"GRANT USAGE ON SCHEMA {esquema} TO actas_app")
+        c.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {esquema} GRANT SELECT, INSERT, UPDATE ON TABLES TO actas_app")
     try:
         yield dsn, esquema
     finally:
@@ -83,3 +91,12 @@ def chromium():
     yield "http://127.0.0.1:9333"
     proc.terminate()
     proc.wait(10)
+
+
+@pytest.fixture
+def repo_app(dsn, repo):
+    """El repositorio con el rol del supervisor (y de `actas.sh`), sobre el mismo esquema ya migrado."""
+    url, esquema = dsn
+    r = base.Repositorio(psycopg.conninfo.make_conninfo(url, user="actas_app", password="pruebas"), esquema)
+    yield r
+    r.cerrar()

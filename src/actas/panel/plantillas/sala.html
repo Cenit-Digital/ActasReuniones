@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% set seccion = "salas" %}
+{% block titulo %}{{ sala.nombre }}{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/salas">Salas y socios</a> <span aria-hidden="true">/</span> {{ sala.nombre }}</nav>
+<div class="titular">
+<div>
+<h1>{{ sala.nombre }}</h1>
+<p class="linea-datos"><span class="mono">{{ sala.room }}</span><span>creada por {{ sala.creada_por }} el {{ creada }}</span></p>
+</div>
+<div class="acciones"><a class="boton boton-primario" href="/grabar">Grabar en esta sala</a></div>
+</div>
+<section class="tarjeta" aria-labelledby="t-clave">
+<h2 id="t-clave">Contraseña de la sala</h2>
+{% if clave %}
+<div class="copiable">
+<code class="mono" id="clave">{{ clave }}</code>
+<button class="boton" type="button" data-copiar="clave" hidden>Copiar<span class="oculto"> la contraseña</span></button>
+</div>
+<p class="detalle">Ha quedado anotado que la has visto. Al salir de esta página deja de mostrarse.</p>
+{% else %}
+<p>Oculta. <a class="boton" href="/salas/{{ sala.id }}/clave">Mostrar o copiar…</a></p>
+{% endif %}
+</section>
+<section class="tarjeta" aria-labelledby="t-enlaces">
+<h2 id="t-enlaces">Enlaces para los socios</h2>
+<p class="detalle">Cada socio entra con el suyo: lleva su identificador de pista y el <span class="mono">hash</span> de la sala, no la contraseña. Envía la contraseña por otro canal.</p>
+{% if enlaces %}
+<ul class="enlaces">
+{% for nombre, url in enlaces %}
+<li class="copiable"><strong>{{ nombre }}</strong><code class="mono" id="enlace-{{ loop.index }}">{{ url }}</code><button class="boton" type="button" data-copiar="enlace-{{ loop.index }}" hidden>Copiar<span class="oculto"> el enlace de {{ nombre }}</span></button></li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="vacio">No hay socios activos. <a href="/salas#socios">Da de alta a los socios</a>.</p>
+{% endif %}
+</section>
+<section class="tarjeta" aria-labelledby="t-historial">
+<h2 id="t-historial">Historial</h2>
+<ul class="conformidades">
+{% for tipo, quien, cuando in eventos %}
+<li><span>{{ tipo }} · {{ quien }}</span><span class="detalle mono">{{ cuando }}</span></li>
+{% endfor %}
+</ul>
+</section>
+{% endblock %}

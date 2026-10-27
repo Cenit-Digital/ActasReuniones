@@ -1,7 +1,9 @@
 """Órdenes de `scripts/actas.sh` (KubernetesInfrastructure), que las ejecuta con `kubectl exec` en el contenedor del
 supervisor: escriben la petición en la base y el supervisor la atiende. Hasta F2 es la única forma de grabar.
 
-  python -m actas.cli grabar SOCIO[,SOCIO...] VERSION   socios conformes (streamIDs) y versión del texto informativo
+  python -m actas.cli grabar SOCIO[,SOCIO...] VERSION [SALA]
+                                                        socios conformes (streamIDs), versión del texto informativo y
+                                                        sala (su nombre en VDO.Ninja); sin SALA, la única que haya
   python -m actas.cli parar                             para la grabación activa
   python -m actas.cli estado                            las últimas reuniones (id, estado, motivo, socios)
   python -m actas.cli reintentar ID                     una reunión en `error` vuelve a enviarse a la plataforma
@@ -13,22 +15,23 @@ import sys
 from actas.base import Repositorio
 from actas.conformidad import ConformidadNoValida, validar
 
-_ARGUMENTOS = {"grabar": 3, "parar": 1, "estado": 1, "reintentar": 2}
+_ARGUMENTOS = {"grabar": (3, 4), "parar": (1,), "estado": (1,), "reintentar": (2,)}
 
 
 def main(args: list[str], repo: Repositorio | None = None) -> int:
     orden = args[0] if args else ""
-    if _ARGUMENTOS.get(orden) != len(args):
+    if len(args) not in _ARGUMENTOS.get(orden, ()):
         print(__doc__, file=sys.stderr)
         return 2
     repo = repo or Repositorio(os.environ["ACTAS_DSN"])
-    if orden == "grabar" and len(args) == 3:
+    if orden == "grabar":
         try:
             peticion = validar([s for s in args[1].split(",") if s], args[2])
+            sala = _sala(repo, args[3] if len(args) == 4 else None)
         except ConformidadNoValida as e:
             print(f"rechazada: {e}", file=sys.stderr)
             return 1
-        print(repo.pedir(peticion))
+        print(repo.pedir(peticion, sala_id=sala))
         return 0
     if orden == "parar" and len(args) == 1:
         rid = repo.pedir_parada()
@@ -49,6 +52,21 @@ def main(args: list[str], repo: Repositorio | None = None) -> int:
         return 0 if ok else 1
     print(__doc__, file=sys.stderr)
     return 2
+
+
+def _sala(repo: Repositorio, room: str | None) -> str:
+    """El id de la sala en la que se graba (V2): la indicada por su nombre en VDO.Ninja o, sin indicarla, la única."""
+    salas = repo.ids_de_salas()
+    if room is not None:
+        elegidas = [sid for sid, r in salas if r == room]
+        if not elegidas:
+            raise ConformidadNoValida("no existe la sala indicada: créala en el panel")
+        return elegidas[0]
+    if not salas:
+        raise ConformidadNoValida("no hay ninguna sala: créala en el panel («Salas y socios»)")
+    if len(salas) > 1:
+        raise ConformidadNoValida("hay varias salas: indica en cuál se graba (su nombre en VDO.Ninja)")
+    return salas[0][0]
 
 
 if __name__ == "__main__":

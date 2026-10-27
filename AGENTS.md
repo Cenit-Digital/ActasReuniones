@@ -18,7 +18,7 @@ Reglas que no se negocian:
 
 | Ruta | Qué contiene |
 | --- | --- |
-| `src/actas/` | Módulos puros (`pistas`, `conformidad`, `estados`, `purga`, `sondeo`, `registro`, `aviso`, `transcripcion` y, del panel, `origen`, `formulario`, `busqueda`, `presentacion`) y adaptadores (`cdp`, `grabador`, `base`, `plataforma`, `metricas`), el bucle del supervisor (`supervisor`, `__main__`), las órdenes de `actas.sh` (`cli`) y el panel de F2 (`panel/`, Starlette con plantillas Jinja2) |
+| `src/actas/` | Módulos puros (`pistas`, `conformidad`, `estados`, `purga`, `sondeo`, `registro`, `aviso`, `transcripcion`, `salas` y `enlaces` y, del panel, `origen`, `formulario`, `busqueda`, `presentacion`) y adaptadores (`cdp`, `grabador`, `base`, `plataforma`, `metricas`), el bucle del supervisor (`supervisor`, `__main__`), las órdenes de `actas.sh` (`cli`) y el panel de F2 (`panel/`, Starlette con plantillas Jinja2) |
 | `textos/` | Textos informativos versionados (`informativo-<versión>.md`) que muestra «Grabar»; la versión queda en `conformidades` |
 | `migraciones/` | Esquema del inquilino `actas` del PostgreSQL compartido (lo aplica `actas_owner` en el initContainer, `python -m actas.migrar`) |
 | `tests/unit/` · `tests/integracion/` | Unitarios (objetivo de la mutación) e integración con PostgreSQL (`ACTAS_DSN_PRUEBAS`, `scripts/pg-pruebas.sh`) y con Chromium (`ACTAS_CHROMIUM`) |

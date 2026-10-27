@@ -7,20 +7,19 @@ parada brusca deja un `.crdownload` parcial.
 """
 
 import json
-import os
 import time
 import urllib.parse
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from actas.aviso import streams_validos
 from actas.cdp import Cdp, Evento
+from actas.enlaces import BASE, SAL_SITIO
 from actas.registro import Registro
+from actas.salas import ClaveNoValida, SalaNoDisponible, descifrar
 
-BASE = "https://reuniones.cenitdigital.es/"
-# session.salt del index.html de ReunionesVdoNinja: la de los enlaces de los socios. Con otra, el grabador entra en otra sala.
-SAL_SITIO = "reuniones.cenitdigital.es"
 ESPERA_DESCARGAS_S = 45
 
 # Anota los streamIDs que anuncia la sala (lista al entrar y videoaddedtoroom después) para el aviso del grabador.
@@ -67,13 +66,6 @@ class Sala:
     salt: str = SAL_SITIO
     base: str = BASE
 
-    @classmethod
-    def del_entorno(cls) -> "Sala":
-        sala = cls(os.environ["SALA"], os.environ["CLAVE"], os.environ.get("SALT") or SAL_SITIO)
-        if not sala.clave:
-            raise ValueError("CLAVE vacía: la sala quedaría con la contraseña pública del sitio")
-        return sala
-
     def url(self, socio: str) -> str:
         """URL de la página espectadora de `socio`. Lleva la contraseña: nunca se registra sin redactar."""
         params: list[tuple[str, str | None]] = [
@@ -90,6 +82,24 @@ class Sala:
             ("novideo", None),
         ]
         return self.base + "?" + "&".join(k if v is None else f"{k}={urllib.parse.quote(v, safe='')}" for k, v in params)
+
+
+def sala_de_reunion(
+    r: Mapping[str, Any], cifrada_de: Callable[[str], tuple[str, bytes] | None], maestra: bytes, registro: Registro
+) -> Sala:
+    """La sala de la reunión (@a46), con su contraseña descifrada y oculta en el registro desde ese momento. Sin sala o sin
+    poder descifrarla, SalaNoDisponible: nunca se cae en otra sala (el `envFrom` `actas-sala` de antes de V2)."""
+    sid = r.get("sala_id")
+    datos = cifrada_de(str(sid)) if sid else None
+    if datos is None:
+        raise SalaNoDisponible("la reunión no tiene sala")
+    room, cifrada = datos
+    try:
+        clave = descifrar(maestra, room, cifrada)
+    except ClaveNoValida:
+        raise SalaNoDisponible("la contraseña de la sala no se puede descifrar") from None
+    registro.ocultar(clave)
+    return Sala(room, clave)
 
 
 @dataclass
