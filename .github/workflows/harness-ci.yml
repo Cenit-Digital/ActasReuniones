@@ -134,6 +134,10 @@ jobs:
       # La misma imagen que el contenedor `chromium` del supervisor (KubernetesInfrastructure, kubernetes/apps/actas):
       # mcr.microsoft.com/playwright/python:v1.63.0-noble (Chromium 1243).
       image: mcr.microsoft.com/playwright/python@sha256:72bd171a9ffc2b4b59532aaa6210e21014d07093120dc25528870c0b840da1f0
+      # Playwright, «Docker» (docs/docker): «Using `--ipc=host` is recommended when using Chromium. Without it, Chromium can run
+      # out of memory and crash». Sin él, con el /dev/shm de 64 MB de Docker, el renderer caía a 1280 px tras auditar con axe
+      # las pantallas de V3 (`Inspector.targetCrashed`, run 40577012021 de ActasReuniones#15).
+      options: --ipc=host
     env:
       ACTAS_CHROMIUM: /ms-playwright/chromium-1243/chrome-linux64/chrome
       ACTAS_AXE: /tmp/axe/axe.min.js
