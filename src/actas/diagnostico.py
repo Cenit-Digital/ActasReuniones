@@ -45,7 +45,16 @@ _FIJOS = {
         "No se grabó: faltaba alguna conformidad",
         "Al ir a grabar, el supervisor comprobó que algún socio no tenía su conformidad con el texto informativo de esta "
         "reunión, así que no grabó a nadie.",
-        "Vuelve a pedir la grabación desde «Grabar», marcando solo a los socios conformes. " + _SIN_AUDIO,
+        "Vuelve a pedir la grabación desde «Grabar», marcando solo a los socios conformes. En una reunión programada (y en "
+        "cada repetición de una serie, que nace sin conformidades), márcalas en «Modificar» antes de su hora. " + _SIN_AUDIO,
+        False,
+    ),
+    "no_empezo": Diagnostico(
+        "No se grabó: no pudo empezar a su hora",
+        "Llegó su hora, pero en su espera el supervisor no pudo empezar: otra grabación seguía en marcha o el supervisor "
+        "estuvo parado. Pasada la espera ya no se graba.",
+        "Si la reunión sigue en marcha, pide la grabación desde «Grabar». Mira abajo si el supervisor da señales de vida. "
+        + _SIN_AUDIO,
         False,
     ),
     "grabador": Diagnostico(
@@ -214,6 +223,7 @@ def _pistas(duracion_s: float | None, parada_s: float | None, causa: str | None,
 _PARADAS = {
     "pedida": "Grabación parada a petición",
     "tope_3h": "Parada por el tope de 3 h",
+    "tope": "Parada al llegar a su tope",
     "grabador_caido": "Parada porque Chromium dejó de responder",
     "terminado": "Parada porque el supervisor se reinició",
     "reinicio_supervisor": "Recuperada tras un reinicio del supervisor",
@@ -245,6 +255,13 @@ def linea_evento(tipo: str, d: Mapping[str, Any]) -> tuple[str, str]:
         return (f"{n} socio conforme no publica" if n == 1 else f"{n} socios conformes no publican") + " en la sala", "aviso"
     if tipo == "audio_borrado":
         return f"Audio borrado ({d.get('motivo')}) · {d.get('ficheros')} ficheros", "info"
+    if tipo == "modificada":
+        return f"Modificada por {d.get('usuario') or 'alguien'}", "info"
+    if tipo == "papelera":
+        por = d.get("usuario") or "alguien"
+        if d.get("accion") == "recuperada":
+            return f"Recuperada de la papelera por {por}", "ok"
+        return f"A la papelera por {por}: se borra a los 7 días", "aviso"
     if tipo == "reintento":
         por = d.get("usuario") or "alguien"
         if d.get("resultado") == "reenviada":
@@ -260,7 +277,13 @@ def linea_evento(tipo: str, d: Mapping[str, Any]) -> tuple[str, str]:
 def _linea_estado(d: Mapping[str, Any]) -> tuple[str, str]:
     desde, hasta, motivo = d.get("desde"), d.get("hasta"), d.get("motivo")
     if hasta == "grabando":
-        return f"Empezó a grabar · {d.get('socios')} socios" if d.get("socios") else "Empezó a grabar", "ok"
+        texto = "Empezó a grabar a su hora" if desde == "programada" else "Empezó a grabar"
+        return f"{texto} · {d.get('socios')} socios" if d.get("socios") else texto, "ok"
+    if hasta == "cancelada":
+        if motivo == "nadie_entro":
+            return "Cancelada: no entró ningún socio conforme en su espera (el audio se borra)", "aviso"
+        texto = f"Cancelada por {d.get('usuario') or 'alguien'}"
+        return texto + (", con las siguientes de la serie" if d.get("accion") == "serie" else ""), "info"
     if desde == "grabando" and hasta == "grabada":
         texto = _PARADAS.get(str(motivo), f"Grabación parada ({motivo})")
         if d.get("completas") is False:

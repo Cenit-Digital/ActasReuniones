@@ -26,8 +26,9 @@ MOTIVOS = [
     "plataforma_cancelado",
     "estado_desconocido",
     "plataforma",
+    "no_empezo",  # V3: una programada que pasada su espera no pudo empezar
 ]
-REINTENTABLES = set(MOTIVOS) - {"conformidad", "sala", "grabador", "pistas"}
+REINTENTABLES = set(MOTIVOS) - {"conformidad", "sala", "grabador", "pistas", "no_empezo"}
 
 
 @pytest.mark.parametrize("motivo", MOTIVOS)
@@ -129,6 +130,27 @@ def test_segundos(s, texto):
         ("reintento", {"usuario": "pablo", "resultado": "reenviada"}, "pablo", "ok"),
         ("reintento", {"usuario": "pablo", "resultado": "ninguna_pista"}, "no queda audio", "error"),
         ("reintento", {"usuario": "pablo", "resultado": "interno"}, "falló al atenderlo", "error"),
+        # V3: programadas, su tope, canceladas, cambios y papelera.
+        ("estado", {"desde": "programada", "hasta": "grabando", "socios": 2}, "Empezó a grabar a su hora · 2 socios", "ok"),
+        ("estado", {"desde": "grabando", "hasta": "grabada", "motivo": "tope", "completas": True}, "su tope", "aviso"),
+        ("estado", {"desde": "programada", "hasta": "cancelada", "usuario": "pablo"}, "Cancelada por pablo", "info"),
+        (
+            "estado",
+            {"desde": "programada", "hasta": "cancelada", "usuario": "pablo", "accion": "serie"},
+            "Cancelada por pablo, con las siguientes de la serie",
+            "info",
+        ),
+        (
+            "estado",
+            {"desde": "grabando", "hasta": "cancelada", "motivo": "nadie_entro"},
+            "no entró ningún socio conforme",
+            "aviso",
+        ),
+        ("estado", {"desde": "programada", "hasta": "error", "motivo": "no_empezo"}, "Pasó a error (no_empezo)", "error"),
+        ("modificada", {"usuario": "pablo"}, "Modificada por pablo", "info"),
+        ("papelera", {"accion": "eliminada", "usuario": "pablo"}, "A la papelera por pablo", "aviso"),
+        ("papelera", {"accion": "recuperada", "usuario": "pablo"}, "Recuperada de la papelera por pablo", "ok"),
+        ("audio_borrado", {"motivo": "nadie_entro", "ficheros": 2}, "Audio borrado", "info"),
     ],
 )
 def test_cada_evento_en_una_linea_legible(tipo, detalle, frase, nivel):
@@ -187,3 +209,12 @@ def test_con_el_latido_viejo_lo_demas_no_se_da_por_bueno():
     lineas = comprobaciones(LATIDO, 120, 0)
     assert lineas[0] == ("Supervisor sin latido reciente · hace 00:02:00", "error")
     assert all(n == "info" and t.endswith("· dato del último latido") for t, n in lineas[1:])
+
+
+def test_no_empezo_explica_la_espera():
+    d = diagnosticar("no_empezo")
+    assert "espera" in d.que_paso and "Grabar" in d.que_hacer
+
+
+def test_conformidad_en_una_programada_dice_donde_marcarla():
+    assert "Modificar" in diagnosticar("conformidad").que_hacer

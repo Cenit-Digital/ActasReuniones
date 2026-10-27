@@ -467,7 +467,7 @@ def test_programadas_en_orden_de_hora(repo_panel, repo):
     sala = _sala(repo)
     tarde = repo_panel.programar(_prog(sala, para=datetime.now(UTC) + timedelta(days=3)), USUARIO)
     pronto = repo_panel.programar(_prog(sala, para=datetime.now(UTC) + timedelta(days=1)), USUARIO)
-    assert [r["id"] for r in repo_panel.programadas()] == [pronto, tarde]
+    assert [(r["id"], r["conformes"]) for r in repo_panel.programadas()] == [(pronto, 2), (tarde, 2)]
 
 
 def test_vencidas_con_su_retraso_segun_la_base(repo_panel, repo):

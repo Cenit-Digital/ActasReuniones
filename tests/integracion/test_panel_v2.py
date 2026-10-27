@@ -157,14 +157,14 @@ def test_la_navegacion_solo_enlaza_pantallas_que_existen(cliente):
     html = cliente.get("/", headers=USUARIO).text
     cabecera = html[html.index("<header") : html.index("</header>")]
     internos = re.findall(r'href="(/[^"]*)"', cabecera)
-    assert set(internos) == {"/", "/salas", "/grabar"}
+    assert set(internos) == {"/", "/programacion", "/salas", "/grabar"}  # «Programación», V3
     assert 'href="https://transcribir.cenitdigital.es/#/actas"' in cabecera
     assert 'method="post"' not in cabecera
     for url in internos:
         assert cliente.get(url, headers=USUARIO).status_code == 200
 
 
-@pytest.mark.parametrize(("ruta", "seccion"), [("/", "/"), ("/grabar", "/grabar")])
+@pytest.mark.parametrize(("ruta", "seccion"), [("/", "/"), ("/grabar", "/grabar"), ("/programacion", "/programacion")])
 def test_la_seccion_actual_se_marca(cliente, ruta, seccion):
     html = cliente.get(ruta, headers=USUARIO).text
     assert re.search(rf'<a href="{seccion}"[^>]*aria-current="page"', html)

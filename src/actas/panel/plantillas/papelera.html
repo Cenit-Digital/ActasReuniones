@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_glifos.html" import chip %}
+{% set seccion = "reuniones" %}
+{% block titulo %}Papelera{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> Papelera</nav>
+<div class="titular">
+<div>
+<h1>Papelera</h1>
+<p class="entradilla">Lo eliminado se puede recuperar durante 7 días; después se borra de verdad. Las copias de seguridad lo conservan unos 6 meses más.</p>
+</div>
+</div>
+{% if reuniones %}
+<div class="tabla" role="region" aria-label="Reuniones en la papelera" tabindex="0">
+<table>
+<thead><tr><th scope="col">Reunión</th><th scope="col">Estado</th><th scope="col">Eliminada</th><th scope="col">Se borra</th><th scope="col"><span class="oculto">Acciones</span></th></tr></thead>
+<tbody>
+{% for r in reuniones %}
+<tr>
+<td><a href="/reuniones/{{ r.id }}">{{ r.nombre }}</a></td>
+<td>{{ chip(r.estado) }}</td>
+<td>{{ r.eliminada }} por {{ r.por }}</td>
+<td class="mono">se borra el {{ r.borrado }}</td>
+<td><form method="post" action="/reuniones/{{ r.id }}/recuperar"><button class="boton" type="submit">Recuperar<span class="oculto"> {{ r.nombre }}</span></button></form></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="vacio tarjeta">La papelera está vacía.</p>
+{% endif %}
+{% endblock %}

@@ -519,8 +519,12 @@ class Repositorio:
         return int(fila[0]) if fila else 0
 
     def programadas(self) -> list[dict[str, Any]]:
+        """Las programadas por su hora, con cuántos de sus socios tienen ya su conformidad (`conformes`)."""
         with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
-            filas = cur.execute("SELECT * FROM reuniones WHERE estado = 'programada' ORDER BY programada_para, id").fetchall()
+            filas = cur.execute(
+                "SELECT r.*, (SELECT count(*) FROM conformidades c WHERE c.reunion_id = r.id) AS conformes "
+                "FROM reuniones r WHERE r.estado = 'programada' ORDER BY r.programada_para, r.id"
+            ).fetchall()
         return [_fila(f) for f in filas]
 
     def papelera(self) -> list[dict[str, Any]]:
