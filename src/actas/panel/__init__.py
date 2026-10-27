@@ -3,12 +3,17 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
 
 - Escribe solo con `Repositorio.pedir` y `Repositorio.pedir_parada`, las mismas funciones que `actas.sh`: @a6 y el trigger
   diferido de conformidades aplican igual por las dos vías. El rol `actas_panel` no puede hacer nada más (migración 0002).
+- «Salas y socios» (V2 de #298, migración 0003): crea salas con `room` y contraseña aleatorias, cifradas con la clave del
+  Secret `actas-salas-clave` (`salas`); enseña el enlace de cada socio sin la contraseña (`enlaces`, @a44); y la contraseña
+  solo tras confirmarlo con un POST, que la base anota como `clave_vista` antes de dar el valor cifrado (@a45). Da de alta y de
+  baja socios (@a47). La base no deja al panel leer la contraseña cifrada de otra forma ni cambiar nada (sin UPDATE).
 - Quién pulsa: la cabecera `X-Actas-Usuario`, que pone el Middleware `basicauth` de Traefik (`headerField`, con `removeHeader`
   para que la contraseña no llegue aquí). Solo se cree si además llega `X-Actas-Proxy` con el secreto que añade otro middleware
   de la misma ruta (el patrón de la consola): la NetworkPolicy no es la única barrera. Sin las dos, 401 y nada se escribe.
 - CSRF: `origen.permitido` antes de leer el formulario de cualquier POST; y `origen.lectura_permitida` para todo (XS-Search).
 - CSP estricta (ADR 0023 de KubernetesInfrastructure, D2): solo recursos propios, sin nada en línea; el único JavaScript es
-  `tema.js`, el botón del tema. Sin registro de accesos ni texto de las peticiones en el registro (@a32).
+  `tema.js`, el botón del tema, y `copiar.js`, los botones «Copiar». Sin registro de accesos ni texto de las peticiones en el
+  registro (@a32).
 - Maquetación v2 (V1 de KubernetesInfrastructure#298): los tokens «Terracota Clásica» de transcribir en `estatico/estilo.css`
   y sus fuentes autoalojadas (SIL OFL 1.1, con sus licencias en `estatico/fuentes/`).
 
@@ -25,6 +30,7 @@ from typing import Any
 
 import anyio
 import anyio.to_thread
+import psycopg
 from starlette.applications import Starlette
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException
@@ -34,10 +40,10 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from actas import busqueda, presentacion
+from actas import busqueda, enlaces, presentacion, salas
 from actas.base import Repositorio, es_uuid
 from actas.conformidad import ConformidadNoValida
-from actas.formulario import usuario, validar_grabar, version_de_fichero
+from actas.formulario import FormularioNoValido, usuario, validar_grabar, validar_socio, version_de_fichero
 from actas.origen import del_proxy, lectura_permitida, permitido
 from actas.registro import Registro
 
@@ -80,6 +86,7 @@ CACHE_ESTATICOS = "private, max-age=86400"
 ESTATICOS = {
     "/estilo.css": ("estilo.css", "text/css; charset=utf-8"),
     "/tema.js": ("tema.js", "text/javascript; charset=utf-8"),
+    "/copiar.js": ("copiar.js", "text/javascript; charset=utf-8"),
     **{
         f"/fuentes/{f}": (f"fuentes/{f}", "font/woff2")
         for f in [
@@ -96,6 +103,9 @@ ESTATICOS = {
         for f in ["OFL-manrope.txt", "OFL-gildadisplay.txt", "OFL-jetbrainsmono.txt"]
     },
 }
+
+
+EVENTOS_SALA = {"sala_creada": "Sala creada", "clave_vista": "Contraseña vista"}
 
 
 def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
@@ -185,7 +195,7 @@ class _Guardia:
 
 def crear_app(
     repo: Repositorio,
-    socios: Mapping[str, str],
+    maestra: bytes,
     textos: Mapping[str, str],
     vigente: str,
     origen: str,
@@ -194,7 +204,8 @@ def crear_app(
     conexiones: int = 4,
     concurrencia: int = 16,
 ) -> ASGIApp:
-    """`vigente`: la versión del texto informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente).
+    """`maestra`: la clave de las contraseñas de las salas (Secret `actas-salas-clave`). `vigente`: la versión del texto
+    informativo que muestra «Grabar» y la única que acepta (formulario.version_vigente).
     `secreto`: el que añade la ruta de Traefik en X-Actas-Proxy. `conexiones`: consultas a la base a la vez (una conexión cada
     una), por debajo del CONNECTION LIMIT de actas_panel. `concurrencia`: peticiones en curso a la vez, salvo /salud (503 por
     encima)."""
@@ -212,14 +223,25 @@ def crear_app(
     def mensaje(peticion: Request, texto: str, estado: int) -> Response:
         return pagina(peticion, "mensaje.html", {"mensaje": texto}, estado)
 
-    hablantes = {s: i % 8 for i, s in enumerate(socios)}  # el color de cada socio, como en transcribir (`--hablante-*`)
-
     limitador: list[anyio.CapacityLimiter] = []  # se crea dentro del bucle de eventos, en la primera consulta
 
     async def en_hilo(f: Callable[..., Any], *args: Any) -> Any:
         if not limitador:
             limitador.append(anyio.CapacityLimiter(conexiones))
         return await anyio.to_thread.run_sync(functools.partial(f, *args), limiter=limitador[0])
+
+    async def directorio() -> dict[str, str]:
+        """{push: nombre} de todos los socios, también los de baja: sus nombres siguen en las reuniones pasadas."""
+        return {s["push"]: s["nombre"] for s in await en_hilo(repo.socios)}
+
+    async def formulario(peticion: Request) -> Any:
+        # Starlette 1.7.0, docs/requests.md: «You can configure the maximum number of fields or files with `max_files` and
+        # `max_fields`», «for security reasons» (lo analiza python-multipart 0.0.32, el analizador que exige `request.form`).
+        return await peticion.form(max_files=0, max_fields=TOPE_CAMPOS, max_part_size=TOPE_CUERPO)
+
+    def campo(form: Any, nombre: str) -> str:
+        valor = form.get(nombre)
+        return valor if isinstance(valor, str) else ""
 
     async def salud(_: Request) -> Response:
         return PlainTextResponse("ok")
@@ -233,6 +255,7 @@ def crear_app(
 
     async def lista(peticion: Request) -> Response:
         reuniones = await en_hilo(repo.ultimas, TOPE_LISTA)
+        socios = await directorio()
         filas = [
             {
                 "id": r["id"],
@@ -256,6 +279,14 @@ def crear_app(
             r, conformidades, segmentos = await en_hilo(repo.detalle, rid)
         except KeyError:
             raise HTTPException(404) from None
+        socios = await directorio()
+        hablantes = {s: i % 8 for i, s in enumerate(socios)}  # el color de cada socio, como en transcribir (`--hablante-*`)
+        sala = None
+        if r.get("sala_id"):
+            try:
+                sala = await en_hilo(repo.sala, r["sala_id"])
+            except KeyError:
+                sala = None
         contexto = {
             "r": r,
             "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
@@ -267,6 +298,7 @@ def crear_app(
                 for h, ini, _fin, t in segmentos
             ],
             "transcribir": f"{TRANSCRIBIR}/#/trabajos/{r['trabajo_id']}" if r.get("trabajo_id") else None,
+            "sala": sala,
         }
         return pagina(peticion, "reunion.html", contexto)
 
@@ -284,6 +316,7 @@ def crear_app(
         hallados = []
         if q is not None:
             filas = await en_hilo(repo.buscar, q, busqueda.LIMITE, busqueda.QUITAR, busqueda.PONER, busqueda.OPCIONES)
+            socios = await directorio() if filas else {}
             hallados = [
                 {
                     "id": h["reunion_id"],
@@ -297,24 +330,124 @@ def crear_app(
         return pagina(peticion, "buscar.html", {"q": q or "", "hallados": hallados, "limite": busqueda.LIMITE})
 
     async def formulario_grabar(peticion: Request, error: str = "", estado: int = 200) -> Response:
-        contexto = {"socios": list(socios.items()), "version": vigente, "texto": texto, "error": error}
+        activos = [(s["push"], s["nombre"]) for s in await en_hilo(repo.socios) if s["activo"]]
+        contexto = {
+            "socios": activos,
+            "salas": await en_hilo(repo.salas),
+            "version": vigente,
+            "texto": texto,
+            "error": error,
+        }
         return pagina(peticion, "grabar.html", contexto, estado)
 
     async def ver_grabar(peticion: Request) -> Response:
         return await formulario_grabar(peticion)
 
     async def grabar(peticion: Request) -> Response:
-        # Starlette 1.7.0, docs/requests.md: «You can configure the maximum number of fields or files with `max_files` and
-        # `max_fields`», «for security reasons» (lo analiza python-multipart 0.0.32, el analizador que exige `request.form`).
-        form = await peticion.form(max_files=0, max_fields=TOPE_CAMPOS, max_part_size=TOPE_CUERPO)
+        form = await formulario(peticion)
         marcados = [s for s in form.getlist("socio") if isinstance(s, str)]
-        version = form.get("version")
+        sala = campo(form, "sala")
+        activos = [s["push"] for s in await en_hilo(repo.socios) if s["activo"]]
         try:
-            pedida = validar_grabar(marcados, version if isinstance(version, str) else "", socios, (vigente,))
+            if not es_uuid(sala) or sala not in {s["id"] for s in await en_hilo(repo.salas)}:
+                raise FormularioNoValido("elige la sala en la que se graba")
+            pedida = validar_grabar(marcados, campo(form, "version"), activos, (vigente,))
         except ConformidadNoValida as e:
             return await formulario_grabar(peticion, str(e), 400)
-        rid = await en_hilo(repo.pedir, pedida, peticion.headers[CABECERA_USUARIO])
+        rid = await en_hilo(repo.pedir, pedida, peticion.headers[CABECERA_USUARIO], sala)
         return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    # ── Salas y socios (V2) ───────────────────────────────────────────────────────────────────────────────────────────
+
+    async def ver_salas(peticion: Request, error: str = "", estado: int = 200) -> Response:
+        contexto = {"salas": await en_hilo(repo.salas), "socios": await en_hilo(repo.socios), "error": error}
+        return pagina(peticion, "salas.html", contexto, estado)
+
+    async def sala_nueva(peticion: Request, error: str = "", estado: int = 200) -> Response:
+        return pagina(peticion, "sala_nueva.html", {"error": error}, estado)
+
+    async def crear_sala(peticion: Request) -> Response:
+        """@a43: tras confirmar en /salas/nueva. La contraseña en claro solo vive en esta petición."""
+        form = await formulario(peticion)
+        try:
+            nombre = salas.nombre_de_sala(campo(form, "nombre"))
+        except salas.SalaNoValida as e:
+            return await sala_nueva(peticion, str(e), 400)
+        room, clave = salas.nuevo_room(), salas.nueva_clave()
+        cifrada = salas.cifrar(maestra, room, clave)
+        try:
+            sid = await en_hilo(
+                repo.crear_sala, nombre, room, enlaces.hash_sala(clave), cifrada, peticion.headers[CABECERA_USUARIO]
+            )
+        except psycopg.errors.UniqueViolation as e:
+            if e.diag.constraint_name != "salas_nombre_key":
+                raise  # el room repetido (36^16 posibles): 500 y Pablo lo vuelve a intentar
+            return await sala_nueva(peticion, "Ya hay una sala con ese nombre", 400)
+        return RedirectResponse(f"/salas/{sid}", status_code=303)
+
+    async def sala_o_404(peticion: Request) -> dict[str, Any]:
+        sid = peticion.path_params["sid"]
+        if not es_uuid(sid):
+            raise HTTPException(404)
+        try:
+            sala: dict[str, Any] = await en_hilo(repo.sala, sid)
+        except KeyError:
+            raise HTTPException(404) from None
+        return sala
+
+    async def una_sala(peticion: Request, sala: dict[str, Any], clave: str | None = None) -> Response:
+        sid = sala["id"]
+        activos = [s for s in await en_hilo(repo.socios) if s["activo"]]
+        contexto = {
+            "sala": sala,
+            "creada": sala["creada_en"].strftime("%Y-%m-%d %H:%M"),
+            # @a44: sin la contraseña; el `hash` se guardó al crear la sala (el mismo de enlaces.hash_sala).
+            "enlaces": [(s["nombre"], enlaces.enlace(sala["room"], sala["hash"], s["push"], s["nombre"])) for s in activos],
+            "eventos": [
+                (EVENTOS_SALA.get(e["tipo"], e["tipo"]), e["usuario"], e["momento"].strftime("%Y-%m-%d %H:%M"))
+                for e in await en_hilo(repo.eventos_de_sala, sid)
+            ],
+            "clave": clave,
+        }
+        return pagina(peticion, "sala.html", contexto)
+
+    async def ver_sala(peticion: Request) -> Response:
+        return await una_sala(peticion, await sala_o_404(peticion))
+
+    async def confirmar_clave(peticion: Request) -> Response:
+        return pagina(peticion, "sala_clave.html", {"sala": await sala_o_404(peticion)})
+
+    async def mostrar_clave(peticion: Request) -> Response:
+        """@a45: la base anota `clave_vista` (quién y cuándo) en la misma transacción en la que da el valor cifrado."""
+        sala = await sala_o_404(peticion)
+        cifrada = await en_hilo(repo.ver_clave, sala["id"], peticion.headers[CABECERA_USUARIO])
+        if cifrada is None:
+            raise HTTPException(404)
+        try:
+            clave = salas.descifrar(maestra, sala["room"], cifrada)
+        except salas.ClaveNoValida:
+            return mensaje(peticion, "La contraseña de esta sala no se puede descifrar con la clave del panel.", 500)
+        return await una_sala(peticion, sala, clave)
+
+    async def alta_socio(peticion: Request) -> Response:
+        form = await formulario(peticion)
+        try:
+            socio = validar_socio(campo(form, "push"), campo(form, "nombre"), campo(form, "correo"))
+            await en_hilo(repo.alta_socio, socio)
+        except FormularioNoValido as e:
+            return await ver_salas(peticion, str(e), 400)
+        except psycopg.errors.UniqueViolation:
+            return await ver_salas(peticion, "Ya hay un socio con ese identificador", 400)
+        return RedirectResponse("/salas#socios", status_code=303)
+
+    async def socio_activo(peticion: Request) -> Response:
+        form = await formulario(peticion)
+        activo = {"1": True, "0": False}.get(campo(form, "activo"))
+        if activo is None:
+            return await ver_salas(peticion, "petición no válida", 400)
+        if not await en_hilo(repo.socio_activo, peticion.path_params["push"], activo):
+            raise HTTPException(404)
+        return RedirectResponse("/salas#socios", status_code=303)
 
     async def parar(peticion: Request) -> Response:
         rid = await en_hilo(repo.pedir_parada)
@@ -331,6 +464,14 @@ def crear_app(
         Route("/buscar", buscar),
         Route("/grabar", ver_grabar, methods=["GET"]),
         Route("/grabar", grabar, methods=["POST"]),
+        Route("/salas", ver_salas, methods=["GET"]),
+        Route("/salas", crear_sala, methods=["POST"]),
+        Route("/salas/nueva", sala_nueva, methods=["GET"]),
+        Route("/salas/{sid}", ver_sala, methods=["GET"]),
+        Route("/salas/{sid}/clave", confirmar_clave, methods=["GET"]),
+        Route("/salas/{sid}/clave", mostrar_clave, methods=["POST"]),
+        Route("/socios", alta_socio, methods=["POST"]),
+        Route("/socios/{push}/activo", socio_activo, methods=["POST"]),
         Route("/parar", parar, methods=["POST"]),
     ]
     # Starlette 1.7.0, docs/requests.md: «To limit the complete request body [...] configure `max_body_size` on the

@@ -104,15 +104,31 @@ class _Repo:
         r = {"creado_en": datetime(2026, 10, 26, 21, 30), "inicio": None, "fin": None, "estado": "grabando"}
         return {**r, "motivo": None, "socios": ["pablo"], "pedido_por": "panel"}, [], []
 
+    def socios(self):
+        return [{"push": "pablo", "nombre": "Pablo", "correo": None, "activo": True}]
+
+    def salas(self):
+        return []
+
 
 @pytest.fixture
 def cliente():
-    app = crear_app(_Repo(), {"pablo": "Pablo"}, {"v1": "# Texto"}, "v1", ORIGEN, SECRETO, Registro())
+    app = crear_app(_Repo(), bytes(32), {"v1": "# Texto"}, "v1", ORIGEN, SECRETO, Registro())
     with TestClient(app, base_url=ORIGEN) as c:
         yield c
 
 
-@pytest.mark.parametrize(("ruta", "accion"), [("/grabar", "/grabar"), ("/", "/parar"), (f"/reuniones/{RID}", "/parar")])
+@pytest.mark.parametrize(
+    ("ruta", "accion"),
+    [
+        ("/grabar", "/grabar"),
+        ("/", "/parar"),
+        (f"/reuniones/{RID}", "/parar"),
+        ("/salas", "/socios"),
+        ("/salas", "/socios/pablo/activo"),
+        ("/salas/nueva", "/salas"),
+    ],
+)
 @pytest.mark.parametrize(
     "traefik",
     [

@@ -1,16 +1,14 @@
 """@a29: el formulario «Grabar» del panel (socios ⊆ conocidos, versión del texto informativo) y el usuario de BasicAuth."""
 
-import json
-
 import pytest
 
 from actas.conformidad import ConformidadNoValida, Peticion
 from actas.formulario import (
     FormularioNoValido,
-    SociosNoValidos,
-    socios_conocidos,
+    Socio,
     usuario,
     validar_grabar,
+    validar_socio,
     version_de_fichero,
 )
 
@@ -60,42 +58,40 @@ def test_usuario_ausente_o_raro_es_none(valor):
     assert usuario(valor) is None
 
 
-def test_socios_conocidos_del_fichero_json_en_orden():
-    texto = json.dumps([{"id": "pablo", "nombre": "Pablo"}, {"id": "andres", "nombre": "Andrés"}])
-    assert socios_conocidos(texto) == {"pablo": "Pablo", "andres": "Andrés"}
-    assert list(socios_conocidos(texto)) == ["pablo", "andres"]
+def test_alta_de_socio():
+    assert validar_socio(" pablo ", " Pablo ", "") == Socio("pablo", "Pablo", None)
+    assert validar_socio("andres", "Andrés", " andres@cenitdigital.es ") == Socio("andres", "Andrés", "andres@cenitdigital.es")
+
+
+@pytest.mark.parametrize("push", ["socio-pablo", "-pablo", "pablo-"])
+def test_alta_de_socio_con_guiones_se_rechaza(push):
+    # @a47: la lección de F0, VDO.Ninja cambia «-» por «_» y el streamID acaba en nombres de fichero.
+    with pytest.raises(FormularioNoValido, match="sin guiones"):
+        validar_socio(push, "Pablo", "")
+
+
+@pytest.mark.parametrize("push", ["", "Pablo", "socio_pablo", "socio pablo", "x" * 33, "pablé"])
+def test_alta_de_socio_con_un_push_mal_formado_se_rechaza(push):
+    with pytest.raises(FormularioNoValido, match="identificador"):
+        validar_socio(push, "Pablo", "")
+
+
+@pytest.mark.parametrize("nombre", ["", "   ", "x" * 65, "Pa\nblo"])
+def test_alta_de_socio_con_un_nombre_no_valido_se_rechaza(nombre):
+    with pytest.raises(FormularioNoValido, match="nombre"):
+        validar_socio("pablo", nombre, "")
 
 
 @pytest.mark.parametrize(
-    "datos",
-    [
-        [],
-        {"pablo": "Pablo"},
-        [{"id": "pablo"}],
-        [{"id": "Pablo", "nombre": "Pablo"}],
-        [{"id": "pablo", "nombre": ""}],
-        [{"id": "pablo", "nombre": "  "}],
-        [{"id": "pablo", "nombre": 3}],
-        [{"id": 3, "nombre": "Pablo"}],
-        [{"id": "pablo", "nombre": "x" * 65}],
-        [{"id": "pablo", "nombre": "Pablo"}, {"id": "pablo", "nombre": "Otro"}],
-        [{"id": f"socio{i}", "nombre": "S"} for i in range(17)],
-        ["pablo"],
-    ],
+    "correo", ["pablo", "pablo@", "@cenit.es", "pa blo@cenit.es", "pablo@cenit", "a@b@c.es", "x" * 250 + "@c.es"]
 )
-def test_un_fichero_de_socios_no_valido_no_arranca_el_panel(datos):
-    with pytest.raises(SociosNoValidos):
-        socios_conocidos(json.dumps(datos))
+def test_alta_de_socio_con_un_correo_no_valido_se_rechaza(correo):
+    with pytest.raises(FormularioNoValido, match="correo"):
+        validar_socio("pablo", "Pablo", correo)
 
 
-def test_un_fichero_de_socios_que_no_es_json_no_arranca_el_panel():
-    with pytest.raises(SociosNoValidos):
-        socios_conocidos("pablo,roberto")
-
-
-def test_hasta_16_socios_conocidos():
-    datos = [{"id": f"socio{i}", "nombre": "S"} for i in range(16)]
-    assert len(socios_conocidos(json.dumps(datos))) == 16
+def test_nombre_y_push_en_su_tope():
+    assert validar_socio("p" * 32, "n" * 64, "").push == "p" * 32
 
 
 @pytest.mark.parametrize(

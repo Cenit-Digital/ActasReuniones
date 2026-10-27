@@ -100,3 +100,10 @@ def test_url_de_la_pagina_espectadora():
         "https://reuniones.cenitdigital.es/?room=sala&password=clave%20%C3%A9%26x&salt=reuniones.cenitdigital.es"
     )
     assert url.endswith("&relay&tcp&cleanoutput&scene&view=sociopablo&label=sociopablo&autorecordremote=-64&novideo")
+
+
+@pytest.mark.parametrize(("room", "clave"), [("", "clave"), ("sala", ""), ("", "")])
+def test_sin_room_o_sin_contrasena_no_hay_pagina_espectadora(room, clave):
+    # SALA_RESCATE solo sirve para retomar y parar: nunca abre una página (sería la sala pública, sin contraseña).
+    with pytest.raises(ValueError):
+        Sala(room, clave).url("sociopablo")

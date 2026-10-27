@@ -3,7 +3,8 @@
 Cada vuelta (cada 5 s):
 1. Si hay una grabación activa: la para si se pidió o si llegó al tope de 3 h (@a7); si no, cada minuto mira si cada socio
    conforme publica en la sala y, si no, enciende el aviso (@a25).
-2. Si no la hay: atiende la reunión `pedida` más antigua, revalidando los socios conformes (@a6).
+2. Si no la hay: atiende la reunión `pedida` más antigua, revalidando los socios conformes (@a6), en la sala de esa reunión
+   (@a46; sin sala, `error` con el motivo `sala`).
 3. Envía a la plataforma las reuniones `grabada` (@a8) y consulta las `transcribiendo` hasta `listo`; con el texto guardado,
    borra su audio del tmpfs (@a10).
 La purga del audio de más de 7 días y del huérfano corre al arrancar y cada hora.
@@ -28,6 +29,7 @@ from actas.metricas import Metricas
 from actas.pistas import Pista, PistasNoValidas, pistas_de
 from actas.purga import Audio, a_borrar
 from actas.registro import Registro
+from actas.salas import SalaNoDisponible
 from actas.sondeo import PLAZO_S, espera, interpretar_creacion, interpretar_estado
 from actas.transcripcion import TranscripcionNoValida, segmentos_de
 
@@ -70,13 +72,14 @@ class Supervisor:
         self,
         repo: Repositorio,
         plataforma: Cliente,
-        nueva_grabacion: Callable[[tuple[str, ...], Path], Grabador],
+        sala_de: Callable[[dict[str, Any]], Any],
+        nueva_grabacion: Callable[[Any, tuple[str, ...], Path], Grabador],
         raiz: Path,
         registro: Registro,
         metricas: Metricas,
         reloj: Callable[[], float] = time.time,
     ) -> None:
-        self.repo, self.plataforma, self.nueva_grabacion = repo, plataforma, nueva_grabacion
+        self.repo, self.plataforma, self.sala_de, self.nueva_grabacion = repo, plataforma, sala_de, nueva_grabacion
         self.raiz, self.log, self.metricas, self.reloj = raiz, registro, metricas, reloj
         self.activa: _Activa | None = None
         self.envios: dict[str, _Sondeo] = {}
@@ -90,8 +93,12 @@ class Supervisor:
         sigue vivo con sus páginas, se paran de forma ordenada para no perder lo grabado; en todo caso pasa a `grabada` con el
         motivo `reinicio_supervisor` y se envía lo que haya (sin nada, acaba en `error: pistas`)."""
         for r in self.repo.en_estado(Estado.GRABANDO):
-            grabador = self.nueva_grabacion(tuple(r["socios"]), self.raiz / r["id"])
             try:
+                sala = self.sala_de(r)
+            except SalaNoDisponible:
+                sala = None  # pedida antes de V2: se retoma igual, para no perder lo grabado (la parada no usa la sala)
+            try:
+                grabador = self.nueva_grabacion(sala, tuple(r["socios"]), self.raiz / r["id"])
                 grabador.reanudar()
                 grabador.parar()
             except Exception as e:  # noqa: BLE001 — Chromium también se reinició: no hay nada que rescatar
@@ -157,7 +164,14 @@ class Supervisor:
         if self.repo.conformidades(r["id"]) != [(s, peticion.version) for s in peticion.socios]:
             self._error(r["id"], Estado.PEDIDA, "conformidad")
             return
-        grabador = self.nueva_grabacion(peticion.socios, self.raiz / r["id"])
+        # @a46: la sala de esta reunión, nunca la de otra. Sin sala o sin poder descifrarla, no se graba.
+        try:
+            sala = self.sala_de(r)
+        except SalaNoDisponible as e:
+            self.log("no se graba:", str(e))
+            self._error(r["id"], Estado.PEDIDA, "sala")
+            return
+        grabador = self.nueva_grabacion(sala, peticion.socios, self.raiz / r["id"])
         try:
             self.repo.mover(r["id"], Estado.PEDIDA, Estado.GRABANDO, inicio=True)
         except TransicionNoValida:

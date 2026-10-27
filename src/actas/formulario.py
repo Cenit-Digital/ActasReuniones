@@ -1,29 +1,28 @@
 """El formulario «Grabar» del panel (@a29) y quién lo envía.
 
-- Socios: solo los conocidos (fichero JSON montado desde un ConfigMap de KubernetesInfrastructure), y además lo que ya exige
-  `conformidad.validar` para `actas.sh` (al menos uno, streamID válido, tope de 16).
+- Socios: solo los activos de la tabla `socios` (V2 de KubernetesInfrastructure#298; antes, un ConfigMap), y además lo que ya
+  exige `conformidad.validar` para `actas.sh` (al menos uno, streamID válido, tope de 16). Su alta, con `validar_socio` (@a47).
 - Versión del texto informativo: la de un texto empaquetado (`textos/informativo-<versión>.md`), con el formato de la base.
 - Usuario: el que Traefik pone en `X-Actas-Usuario` tras el BasicAuth (`headerField`); se guarda en `reuniones.pedido_por`, con
   el mismo formato que su CHECK (migración 0002).
 """
 
-import json
 import re
 from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 
-from actas.conformidad import STREAM_ID, TOPE_SOCIOS, ConformidadNoValida, Peticion, validar
+from actas.conformidad import STREAM_ID, ConformidadNoValida, Peticion, validar
 
 _USUARIO = re.compile(r"[A-Za-z0-9._@-]{1,64}")
 _FICHERO_TEXTO = re.compile(r"informativo-([A-Za-z0-9._-]{1,40})\.md")
 TOPE_NOMBRE = 64
+TOPE_CORREO = 254
+_CORREO = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 class FormularioNoValido(ConformidadNoValida):
     """400 y ninguna fila nueva."""
-
-
-class SociosNoValidos(ValueError):
-    """El fichero de socios conocidos no es válido: el panel no arranca."""
 
 
 def validar_grabar(socios: Sequence[str], version: str, conocidos: Collection[str], versiones: Collection[str]) -> Peticion:
@@ -39,24 +38,25 @@ def usuario(valor: str | None) -> str | None:
     return valor if valor is not None and _USUARIO.fullmatch(valor) else None
 
 
-def socios_conocidos(texto: str) -> dict[str, str]:
-    """`[{"id": "pablo", "nombre": "Pablo"}, …]` → {streamID: nombre visible}, en el orden del fichero."""
-    try:
-        datos = json.loads(texto)
-    except json.JSONDecodeError as e:
-        raise SociosNoValidos("el fichero de socios no es JSON") from e
-    if not isinstance(datos, list) or not 1 <= len(datos) <= TOPE_SOCIOS:
-        raise SociosNoValidos(f"una lista de 1 a {TOPE_SOCIOS} socios")
-    socios: dict[str, str] = {}
-    for d in datos:
-        sid = d.get("id") if isinstance(d, dict) else None
-        nombre = d.get("nombre") if isinstance(d, dict) else None
-        if not isinstance(sid, str) or not STREAM_ID.fullmatch(sid) or sid in socios:
-            raise SociosNoValidos("cada socio con un streamID distinto, alfanumérico en minúscula")
-        if not isinstance(nombre, str) or not nombre.strip() or len(nombre) > TOPE_NOMBRE:
-            raise SociosNoValidos(f"cada socio con un nombre de 1 a {TOPE_NOMBRE} caracteres")
-        socios[sid] = nombre
-    return socios
+@dataclass(frozen=True)
+class Socio:
+    push: str
+    nombre: str
+    correo: str | None
+
+
+def validar_socio(push: str, nombre: str, correo: str) -> Socio:
+    """Alta de un socio desde «Salas y socios» (@a47). El `push` es su streamID en VDO.Ninja y en `reuniones.socios`."""
+    push, nombre, correo = push.strip(), nombre.strip(), correo.strip()
+    if "-" in push:
+        raise FormularioNoValido("el identificador va sin guiones: VDO.Ninja los cambia por «_» (lección de F0)")
+    if not STREAM_ID.fullmatch(push):
+        raise FormularioNoValido("el identificador, de 1 a 32 letras minúsculas o números")
+    if not 1 <= len(nombre) <= TOPE_NOMBRE or _CONTROL.search(nombre):
+        raise FormularioNoValido(f"el nombre, de 1 a {TOPE_NOMBRE} caracteres y sin saltos de línea")
+    if correo and (len(correo) > TOPE_CORREO or not _CORREO.fullmatch(correo)):
+        raise FormularioNoValido("el correo no es válido")
+    return Socio(push, nombre, correo or None)
 
 
 class TextoNoValido(ValueError):

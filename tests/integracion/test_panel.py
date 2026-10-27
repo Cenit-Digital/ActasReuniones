@@ -8,11 +8,13 @@ from starlette.testclient import TestClient
 
 from actas.conformidad import Peticion
 from actas.estados import Estado
+from actas.formulario import Socio
 from actas.panel import crear_app
 from actas.registro import Registro
 
 ORIGEN = "https://actas.cenitdigital.es"
 SOCIOS = {"pablo": "Pablo", "roberto": "Roberto", "andres": "Andrés"}
+SALA = "5a1a0000-0000-4000-8000-000000000001"
 VERSION = "2026-10-26"
 TEXTOS = {VERSION: "# Información\n\nTexto <b>informativo</b> de prueba."}
 SECRETO = "secreto-del-proxy"
@@ -22,8 +24,17 @@ MISMO_ORIGEN = {**USUARIO, "sec-fetch-site": "same-origin", "origin": ORIGEN}
 
 
 @pytest.fixture
-def cliente(repo_panel):
-    app = crear_app(repo_panel, SOCIOS, TEXTOS, VERSION, ORIGEN, SECRETO, Registro())
+def cliente(repo_panel, repo):
+    # Los socios y una sala, como los deja «Salas y socios» (V2): la sala, con un id fijo para los formularios de los tests.
+    for push, nombre in SOCIOS.items():
+        repo_panel.alta_socio(Socio(push, nombre, None))
+    with repo.conexion() as c:
+        c.execute(
+            "INSERT INTO salas (id, nombre, room, hash, cifrada, creada_por) "
+            "VALUES (%s, 'Socios', 'salaprueba', 'abcd', %s, 'panel')",
+            (SALA, bytes(40)),
+        )
+    app = crear_app(repo_panel, bytes(32), TEXTOS, VERSION, ORIGEN, SECRETO, Registro())
     with TestClient(app, base_url=ORIGEN, follow_redirects=False) as c:
         yield c
 
@@ -65,7 +76,9 @@ def test_solo_vale_la_cabecera_de_usuario_exacta(cliente, repo, variante):
     """Traefik solo sobrescribe X-Actas-Usuario exacta: una variante con guion bajo (estilo CGI) no cuenta como usuario."""
     assert cliente.get("/", headers={**PROXY, variante: "intruso"}).status_code == 401
     r = cliente.post(
-        "/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**PROXY, variante: "intruso", "origin": ORIGEN}
+        "/grabar",
+        data={"sala": SALA, "socio": ["pablo"], "version": VERSION},
+        headers={**PROXY, variante: "intruso", "origin": ORIGEN},
     )
     assert r.status_code == 401
     assert _cuenta(repo) == (0, 0)
@@ -77,7 +90,7 @@ def test_sin_el_secreto_de_traefik_401_aunque_traiga_usuario(cliente, repo, prox
     assert cliente.get("/", headers={"x-actas-usuario": "panel", **proxy}).status_code == 401
     r = cliente.post(
         "/grabar",
-        data={"socio": ["pablo"], "version": VERSION},
+        data={"sala": SALA, "socio": ["pablo"], "version": VERSION},
         headers={"x-actas-usuario": "panel", "sec-fetch-site": "same-origin", **proxy},
     )
     assert r.status_code == 401
@@ -100,7 +113,9 @@ def test_busqueda_aislada_de_otras_webs(cliente, cabeceras, estado):
 
 
 def test_grabar_sin_usuario_401_y_nada_escrito(cliente, repo):
-    r = cliente.post("/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**PROXY, "sec-fetch-site": "same-origin"})
+    r = cliente.post(
+        "/grabar", data={"sala": SALA, "socio": ["pablo"], "version": VERSION}, headers={**PROXY, "sec-fetch-site": "same-origin"}
+    )
     assert r.status_code == 401
     assert _cuenta(repo) == (0, 0)
 
@@ -134,10 +149,16 @@ def test_hoja_de_estilo_propia(cliente):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/css")
 
 
-def test_solo_el_javascript_propio_del_tema(cliente, repo):
+def test_solo_el_javascript_propio_del_tema_y_de_copiar(cliente, repo):
     _transcrita(repo, [{"hablante": "sociopruebaa", "inicio_ms": 0, "fin_ms": 1, "texto": "hola"}])
-    for ruta in ["/", "/grabar", "/buscar?q=hola"]:
-        assert re.findall(r"<script[^>]*>", cliente.get(ruta, headers=USUARIO).text) == ['<script src="/tema.js">']
+    for ruta in ["/", "/grabar", "/buscar?q=hola", "/salas", f"/salas/{SALA}"]:
+        assert re.findall(r"<script[^>]*>", cliente.get(ruta, headers=USUARIO).text) == [
+            '<script src="/tema.js">',
+            '<script src="/copiar.js" defer>',
+        ]
+    for js in ["/tema.js", "/copiar.js"]:
+        r = cliente.get(js, headers=USUARIO)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
 
 
 # ── Lista y reunión ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -222,7 +243,7 @@ def test_formulario_grabar_con_socios_version_y_texto(cliente):
 
 
 def test_grabar_con_socios_validos(cliente, repo):
-    r = cliente.post("/grabar", data={"socio": ["roberto", "pablo"], "version": VERSION}, headers=MISMO_ORIGEN)
+    r = cliente.post("/grabar", data={"sala": SALA, "socio": ["roberto", "pablo"], "version": VERSION}, headers=MISMO_ORIGEN)
     assert r.status_code == 303
     (fila,) = repo.ultimas(10)
     assert r.headers["location"] == f"/reuniones/{fila['id']}"
@@ -265,7 +286,7 @@ def _trozos(datos: bytes):
 
 def test_grabar_con_cuerpo_por_trozos_sin_content_length(cliente, repo):
     # Traefik reenvía por trozos (Transfer-Encoding: chunked) si no conoce la longitud: el tope se cuenta, sin exigir la cabecera.
-    cuerpo = f"socio=pablo&version={VERSION}".encode()
+    cuerpo = f"sala={SALA}&socio=pablo&version={VERSION}".encode()
     r = cliente.post(
         "/grabar",
         content=_trozos(cuerpo),
@@ -276,7 +297,7 @@ def test_grabar_con_cuerpo_por_trozos_sin_content_length(cliente, repo):
 
 
 def test_grabar_por_trozos_demasiado_grande_413(cliente, repo):
-    cuerpo = f"socio=pablo&version={VERSION}&relleno={'x' * 20_000}".encode()
+    cuerpo = f"sala={SALA}&socio=pablo&version={VERSION}&relleno={'x' * 20_000}".encode()
     r = cliente.post(
         "/grabar",
         content=_trozos(cuerpo),
@@ -340,7 +361,7 @@ def test_la_lista_ofrece_parar_aunque_la_activa_no_este_entre_las_ultimas(client
     ],
 )
 def test_csrf_grabar_403_y_ninguna_fila(cliente, repo, cabeceras):
-    r = cliente.post("/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**USUARIO, **cabeceras})
+    r = cliente.post("/grabar", data={"sala": SALA, "socio": ["pablo"], "version": VERSION}, headers={**USUARIO, **cabeceras})
     assert r.status_code == 403
     assert _cuenta(repo) == (0, 0)
 
@@ -355,6 +376,8 @@ def test_csrf_parar_403_y_nada_escrito(cliente, repo, cabeceras):
 
 
 def test_grabar_solo_con_origin_del_panel(cliente, repo):
-    r = cliente.post("/grabar", data={"socio": ["pablo"], "version": VERSION}, headers={**USUARIO, "origin": ORIGEN})
+    r = cliente.post(
+        "/grabar", data={"sala": SALA, "socio": ["pablo"], "version": VERSION}, headers={**USUARIO, "origin": ORIGEN}
+    )
     assert r.status_code == 303
     assert _cuenta(repo) == (1, 1)

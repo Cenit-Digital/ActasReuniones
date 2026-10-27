@@ -6,7 +6,7 @@ import re
 from html.parser import HTMLParser
 
 import pytest
-from panel_falso import RIDS, SOCIOS, TRABAJO, RepoFalso
+from panel_falso import MAESTRA, RIDS, SALA, TRABAJO, RepoFalso
 from starlette.testclient import TestClient
 
 from actas.panel import crear_app
@@ -15,7 +15,16 @@ from actas.registro import Registro
 ORIGEN = "https://actas.cenitdigital.es"
 SECRETO = "secreto-del-proxy"
 USUARIO = {"x-actas-proxy": SECRETO, "x-actas-usuario": "panel"}
-PAGINAS = ["/", f"/reuniones/{RIDS['transcrita']}", "/buscar?q=presupuesto", "/grabar"]
+PAGINAS = [
+    "/",
+    f"/reuniones/{RIDS['transcrita']}",
+    "/buscar?q=presupuesto",
+    "/grabar",
+    "/salas",
+    "/salas/nueva",
+    f"/salas/{SALA}",
+    f"/salas/{SALA}/clave",
+]
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
@@ -29,7 +38,7 @@ def repo():
 
 @pytest.fixture
 def cliente(repo):
-    app = crear_app(repo, SOCIOS, {"v1": "# Información\n\nTexto."}, "v1", ORIGEN, SECRETO, Registro())
+    app = crear_app(repo, MAESTRA, {"v1": "# Información\n\nTexto."}, "v1", ORIGEN, SECRETO, Registro())
     with TestClient(app, base_url=ORIGEN, follow_redirects=False) as c:
         yield c
 
@@ -148,7 +157,7 @@ def test_la_navegacion_solo_enlaza_pantallas_que_existen(cliente):
     html = cliente.get("/", headers=USUARIO).text
     cabecera = html[html.index("<header") : html.index("</header>")]
     internos = re.findall(r'href="(/[^"]*)"', cabecera)
-    assert set(internos) == {"/", "/grabar"}
+    assert set(internos) == {"/", "/salas", "/grabar"}
     assert 'href="https://transcribir.cenitdigital.es/#/actas"' in cabecera
     assert 'method="post"' not in cabecera
     for url in internos:

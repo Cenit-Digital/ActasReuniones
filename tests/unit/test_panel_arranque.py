@@ -1,7 +1,7 @@
 """Arranque del panel (`python -m actas.panel`): uvicorn sin registro de accesos ni cabecera Server y con tope de concurrencia
 (@a32), y errores sin rastro del texto de la petición ni de la base."""
 
-import json
+import base64
 
 import pytest
 from starlette.testclient import TestClient
@@ -10,18 +10,18 @@ from actas.panel import cargar_textos, crear_app
 from actas.panel.__main__ import configuracion, preparar
 from actas.registro import Registro
 
-SOCIOS = json.dumps([{"id": "pablo", "nombre": "Pablo"}])
+MAESTRA = base64.b64encode(bytes(range(32))).decode()
 
 
 @pytest.fixture
 def entorno(tmp_path):
-    f = tmp_path / "socios.json"
-    f.write_text(SOCIOS, encoding="utf-8")
+    f = tmp_path / "CLAVE"
+    f.write_text(MAESTRA + "\n", encoding="utf-8")
     p = tmp_path / "proxy"
     p.write_text("secreto-del-proxy\n", encoding="utf-8")
     return {
         "ACTAS_DSN": "postgresql:///actas",
-        "ACTAS_SOCIOS_FICHERO": str(f),
+        "ACTAS_SALAS_CLAVE_FICHERO": str(f),
         "ACTAS_SECRETO_PROXY_FICHERO": str(p),
         "PGPASSWORD": "clave-secreta",
     }
@@ -49,9 +49,9 @@ def test_el_tope_de_peticiones_se_configura_como_antes(entorno):
     assert app.tope == 20  # type: ignore[attr-defined]
 
 
-def test_preparar_lee_socios_textos_y_origen(entorno):
+def test_preparar_lee_la_clave_de_las_salas_textos_y_origen(entorno):
     app, registro = preparar(entorno)
-    assert registro.secretos == ["clave-secreta", "secreto-del-proxy"]
+    assert registro.secretos == ["clave-secreta", "secreto-del-proxy", MAESTRA]
     assert callable(app)
 
 
@@ -72,9 +72,19 @@ def test_preparar_sin_secreto_del_proxy_falla(entorno, tmp_path):
         preparar(sin)
 
 
-def test_preparar_sin_fichero_de_socios_falla(entorno, tmp_path):
+def test_preparar_sin_la_clave_de_las_salas_falla(entorno, tmp_path):
+    from actas.salas import ClaveNoValida
+
     with pytest.raises(FileNotFoundError):
-        preparar({**entorno, "ACTAS_SOCIOS_FICHERO": str(tmp_path / "no")})
+        preparar({**entorno, "ACTAS_SALAS_CLAVE_FICHERO": str(tmp_path / "no")})
+    (tmp_path / "corta").write_text(base64.b64encode(bytes(16)).decode(), encoding="utf-8")
+    with pytest.raises(ClaveNoValida):
+        preparar({**entorno, "ACTAS_SALAS_CLAVE_FICHERO": str(tmp_path / "corta")})
+
+
+def test_preparar_ya_no_lee_el_fichero_de_socios(entorno, tmp_path):
+    app, _ = preparar({**entorno, "ACTAS_SOCIOS_FICHERO": str(tmp_path / "no")})
+    assert callable(app)
 
 
 def test_el_texto_empaquetado_tiene_la_frase_de_conformidad():
@@ -101,7 +111,7 @@ class _BaseRota:
 
 
 def test_un_error_no_deja_rastro_de_la_peticion_ni_de_la_base(capsys):
-    app = crear_app(_BaseRota(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://actas.cenitdigital.es", "s", Registro())  # type: ignore[arg-type]
+    app = crear_app(_BaseRota(), bytes(32), {"v1": "x"}, "v1", "https://actas.cenitdigital.es", "s", Registro())  # type: ignore[arg-type]
     with TestClient(app) as c:
         cabeceras = {"x-actas-usuario": "panel", "x-actas-proxy": "s"}
         r = c.get("/buscar", params={"q": "marca-unica-de-la-busqueda"}, headers=cabeceras)
@@ -117,7 +127,7 @@ def test_salud_sin_usuario_ni_base():
         def __getattr__(self, _):
             raise AssertionError("la sonda no toca la base")
 
-    app = crear_app(SinBase(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://actas.cenitdigital.es", "s", Registro())  # type: ignore[arg-type]
+    app = crear_app(SinBase(), bytes(32), {"v1": "x"}, "v1", "https://actas.cenitdigital.es", "s", Registro())  # type: ignore[arg-type]
     with TestClient(app) as c:
         r = c.get("/salud")
     assert (r.status_code, r.text) == (200, "ok")
@@ -158,7 +168,7 @@ def test_como_mucho_n_consultas_a_la_vez():
                 vivas["ahora"] -= 1
             return []
 
-    app = crear_app(Lenta(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://a.example", "s", Registro(), conexiones=2)  # type: ignore[arg-type]
+    app = crear_app(Lenta(), bytes(32), {"v1": "x"}, "v1", "https://a.example", "s", Registro(), conexiones=2)  # type: ignore[arg-type]
 
     async def todas():
         cabeceras = {"x-actas-usuario": "panel", "x-actas-proxy": "s"}
@@ -211,7 +221,7 @@ def _ociosa(puerto):
 def test_la_sonda_responde_aunque_haya_conexiones_ociosas(entorno):
     import urllib.request
 
-    app = crear_app(object(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=4)  # type: ignore[arg-type]
+    app = crear_app(object(), bytes(32), {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=4)  # type: ignore[arg-type]
     srv, puerto = _servidor(app, entorno)
     ociosas = [_ociosa(puerto) for _ in range(8)]
     try:
@@ -238,7 +248,7 @@ def test_tope_de_peticiones_en_curso_salvo_la_sonda_y_los_estaticos():
             soltar.wait(5)
             return []
 
-    app = crear_app(Lenta(), {"pablo": "Pablo"}, {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=2)  # type: ignore[arg-type]
+    app = crear_app(Lenta(), bytes(32), {"v1": "x"}, "v1", "https://a.example", "s", Registro(), concurrencia=2)  # type: ignore[arg-type]
     estados: dict[str, int] = {}
 
     async def todas():

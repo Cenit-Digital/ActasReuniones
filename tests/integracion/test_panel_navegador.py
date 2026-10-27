@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from panel_falso import RIDS, SOCIOS, RepoFalso
+from panel_falso import MAESTRA, RIDS, SALA, RepoFalso
 
 from actas.cdp import Cdp
 from actas.panel import crear_app
@@ -31,7 +31,7 @@ def panel():
     origen = f"http://127.0.0.1:{puerto}"
     repo = RepoFalso()
     textos = {"v1": "# Información\n\nTexto de prueba.\n\n## Qué se graba\n\n- Tu voz.\n- Tus palabras."}
-    app = crear_app(repo, SOCIOS, textos, "v1", origen, SECRETO, Registro())
+    app = crear_app(repo, MAESTRA, textos, "v1", origen, SECRETO, Registro())
     posts: list[dict[str, str]] = []
 
     async def espia(scope, receive, send):
@@ -106,6 +106,10 @@ PANTALLAS = {
     "buscar": "/buscar?q=presupuesto",
     "buscar-vacio": "/buscar",
     "grabar": "/grabar",
+    "salas": "/salas",
+    "sala-nueva": "/salas/nueva",
+    "sala": f"/salas/{SALA}",
+    "sala-confirmar-clave": f"/salas/{SALA}/clave",
     "no-existe": "/no-existe",
 }
 WCAG_22_AA = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]
@@ -168,6 +172,13 @@ def test_axe_sin_infracciones_wcag22_aa_ni_scroll_horizontal(chromium, panel, ax
         assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('[role=alert]')"))
         infracciones, sin_scroll = _auditar(cdp, s, axe)
         assert infracciones == [] and sin_scroll, f"grabar con error ({ancho} px, {tema}): {infracciones}"
+        # «Mostrar la contraseña» (V2): la sala con la contraseña visible y sus botones «Copiar».
+        _ir(cdp, s, origen, f"/salas/{SALA}/clave")
+        cdp.evaluar(s, "document.querySelector('form[method=post] button[type=submit]').click(); true")
+        assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('#clave')"))
+        assert _esperar(lambda: cdp.evaluar(s, "!document.querySelector('button[data-copiar=clave]').hidden"))
+        infracciones, sin_scroll = _auditar(cdp, s, axe)
+        assert infracciones == [] and sin_scroll, f"sala con la contraseña ({ancho} px, {tema}): {infracciones}"
         cdp.cerrar_pagina(t)
     finally:
         cdp.cerrar()

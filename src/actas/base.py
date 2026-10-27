@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 
 from actas.conformidad import Peticion
 from actas.estados import Estado, TransicionNoValida, transicion
+from actas.formulario import Socio
 
 _ESQUEMA = re.compile(r"[a-z][a-z0-9_]{0,30}")
 MIGRACIONES = Path(__file__).resolve().parent / "migraciones"
@@ -80,12 +81,13 @@ class Repositorio:
         finally:
             c.close()
 
-    def pedir(self, peticion: Peticion, pedido_por: str | None = None) -> str:
-        """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2)."""
+    def pedir(self, peticion: Peticion, pedido_por: str | None = None, sala_id: str | None = None) -> str:
+        """@a6: la reunión y una conformidad por socio, en la misma transacción. `pedido_por`: el usuario del panel (F2).
+        `sala_id`: la sala en la que se graba (V2); sin ella, el supervisor no la graba."""
         with self.conexion() as c:
             fila = c.execute(
-                "INSERT INTO reuniones (socios, texto_version, pedido_por) VALUES (%s, %s, %s) RETURNING id",
-                (list(peticion.socios), peticion.version, pedido_por),
+                "INSERT INTO reuniones (socios, texto_version, pedido_por, sala_id) VALUES (%s, %s, %s, %s) RETURNING id",
+                (list(peticion.socios), peticion.version, pedido_por, sala_id),
             ).fetchone()
             assert fila is not None
             rid = str(fila[0])
@@ -275,6 +277,76 @@ class Repositorio:
                 "INSERT INTO purgas (reunion_id, motivo, ficheros, bytes) VALUES (%s, %s, %s, %s)",
                 (rid, motivo, ficheros, octetos),
             )
+
+    # ── Salas y socios (V2 de KubernetesInfrastructure#298, migración 0003) ──────────────────────────────────────────
+
+    def crear_sala(self, nombre: str, room: str, hash_: str, cifrada: bytes, creada_por: str) -> str:
+        """@a43: la contraseña llega ya cifrada (actas.salas). La fila `sala_creada` la pone un trigger de la base."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "INSERT INTO salas (nombre, room, hash, cifrada, creada_por) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (nombre, room, hash_, cifrada, creada_por),
+            ).fetchone()
+        assert fila is not None
+        return str(fila[0])
+
+    def salas(self) -> list[dict[str, Any]]:
+        """Las salas, con cuántas reuniones se grabaron en cada una y la última, de la más usada a la menos."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                """SELECT s.id, s.nombre, s.room, s.hash, s.creada_en, s.creada_por,
+                          count(r.id) AS reuniones, max(r.creado_en) AS ultima
+                   FROM salas s LEFT JOIN reuniones r ON r.sala_id = s.id
+                   GROUP BY s.id ORDER BY max(r.creado_en) DESC NULLS LAST, s.creada_en DESC"""
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def sala(self, sid: str) -> dict[str, Any]:
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            fila = cur.execute("SELECT id, nombre, room, hash, creada_en, creada_por FROM salas WHERE id = %s", (sid,)).fetchone()
+        if fila is None:
+            raise KeyError(sid)
+        return _fila(fila)
+
+    def ver_clave(self, sid: str, usuario: str) -> bytes | None:
+        """@a45: la contraseña cifrada, y la fila `clave_vista` anotada en la misma transacción por la base. None si no existe."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT ver_clave_sala(%s, %s)", (sid, usuario)).fetchone()
+        return bytes(fila[0]) if fila and fila[0] is not None else None
+
+    def eventos_de_sala(self, sid: str) -> list[dict[str, Any]]:
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT tipo, usuario, momento FROM salas_eventos WHERE sala_id = %s ORDER BY momento, id", (sid,)
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def cifrada_de_sala(self, sid: str) -> tuple[str, bytes] | None:
+        """(room, contraseña cifrada) para el supervisor (@a46). Sin auditoría: es el grabador, no una persona."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT room, cifrada FROM salas WHERE id = %s", (sid,)).fetchone()
+        return (fila[0], bytes(fila[1])) if fila else None
+
+    def ids_de_salas(self) -> list[tuple[str, str]]:
+        """(id, room) de todas las salas: `actas.sh grabar` sin sala usa la única que haya."""
+        with self.conexion() as c:
+            filas = c.execute("SELECT id::text, room FROM salas ORDER BY creada_en").fetchall()
+        return [(f[0], f[1]) for f in filas]
+
+    def alta_socio(self, socio: Socio) -> None:
+        with self.conexion() as c:
+            c.execute("INSERT INTO socios (push, nombre, correo) VALUES (%s, %s, %s)", (socio.push, socio.nombre, socio.correo))
+
+    def socios(self) -> list[dict[str, Any]]:
+        """Todos, también los dados de baja: sus nombres siguen haciendo falta en las reuniones pasadas."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute("SELECT push, nombre, correo, activo FROM socios ORDER BY push").fetchall()
+        return [_fila(f) for f in filas]
+
+    def socio_activo(self, push: str, activo: bool) -> bool:
+        with self.conexion() as c:
+            fila = c.execute("SELECT socio_activo(%s, %s)", (push, activo)).fetchone()
+        return bool(fila and fila[0])
 
     def cuenta_por_estado(self) -> dict[str, int]:
         with self.conexion() as c:

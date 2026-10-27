@@ -1,5 +1,6 @@
 // Tema del panel: el del sistema (prefers-color-scheme), salvo que se elija otro con el botón; se recuerda en este navegador.
-// Se carga en <head> para aplicar el tema guardado antes de pintar. Es el único JavaScript del panel (CSP script-src 'self').
+// Se carga en <head> para aplicar el tema guardado antes de pintar. Con copiar.js, el único JavaScript del panel (CSP
+// script-src 'self').
 (function () {
   'use strict';
   var raiz = document.documentElement;

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% set seccion = "salas" %}
+{% block titulo %}Salas y socios{% endblock %}
+{% block contenido %}
+<div class="titular">
+<div>
+<h1>Salas y socios</h1>
+<p class="entradilla">Cada sala tiene su propio nombre en VDO.Ninja y su contraseña, que no cambia una vez creada.</p>
+</div>
+<div class="acciones"><a class="boton boton-primario" href="/salas/nueva">Crear sala nueva</a></div>
+</div>
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha guardado: {{ error }}.</p>{% endif %}
+<section aria-labelledby="t-salas">
+<h2 id="t-salas">Salas</h2>
+{% if salas %}
+<div class="tabla tabla-sin-cortes" role="region" aria-label="Lista de salas" tabindex="0">
+<table>
+<thead><tr><th scope="col">Sala</th><th scope="col">Nombre en VDO.Ninja</th><th scope="col">Reuniones</th><th scope="col">Última</th></tr></thead>
+<tbody>
+{% for s in salas %}
+<tr>
+<td><a href="/salas/{{ s.id }}">{{ s.nombre }}</a></td>
+<td class="mono">{{ s.room }}</td>
+<td>{{ s.reuniones }}</td>
+<td>{% if s.ultima %}{{ s.ultima.strftime("%Y-%m-%d %H:%M") }}{% else %}<span class="detalle">sin usar</span>{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="vacio tarjeta">Aún no hay salas. <a href="/salas/nueva">Crea la primera</a>.</p>
+{% endif %}
+</section>
+<section aria-labelledby="t-socios" id="socios">
+<h2 id="t-socios">Socios</h2>
+{% if socios %}
+<div class="tabla tabla-sin-cortes" role="region" aria-label="Lista de socios" tabindex="0">
+<table>
+<thead><tr><th scope="col">Socio</th><th scope="col">Identificador</th><th scope="col">Correo</th><th scope="col">Estado</th></tr></thead>
+<tbody>
+{% for s in socios %}
+<tr>
+<td>{{ s.nombre }}</td>
+<td class="mono">{{ s.push }}</td>
+<td>{{ s.correo or "" }}</td>
+<td>
+<form method="post" action="/socios/{{ s.push }}/activo" class="en-linea">
+{% if s.activo %}<span>Activo</span><input type="hidden" name="activo" value="0"><button class="boton" type="submit">Dar de baja<span class="oculto"> a {{ s.nombre }}</span></button>
+{% else %}<span class="detalle">de baja</span><input type="hidden" name="activo" value="1"><button class="boton" type="submit">Dar de alta<span class="oculto"> a {{ s.nombre }}</span></button>{% endif %}
+</form>
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="vacio tarjeta">Aún no hay socios.</p>
+{% endif %}
+<form method="post" action="/socios" class="tarjeta formulario">
+<h3>Dar de alta a un socio</h3>
+<div class="campos">
+<div class="campo"><label for="push">Identificador</label><input id="push" name="push" type="text" required maxlength="32" pattern="[a-z0-9]{1,32}" autocomplete="off" spellcheck="false" aria-describedby="push-ayuda"><p class="detalle" id="push-ayuda">Letras minúsculas y números, sin guiones (su pista en VDO.Ninja).</p></div>
+<div class="campo"><label for="nombre">Nombre</label><input id="nombre" name="nombre" type="text" required maxlength="64" autocomplete="off"></div>
+<div class="campo"><label for="correo">Correo <span class="detalle">(opcional)</span></label><input id="correo" name="correo" type="email" maxlength="254" autocomplete="off"></div>
+</div>
+<div class="acciones"><button class="boton boton-primario" type="submit">Dar de alta</button></div>
+</form>
+</section>
+{% endblock %}
