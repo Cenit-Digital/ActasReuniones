@@ -59,7 +59,9 @@ TRANSCRIBIR = "https://transcribir.cenitdigital.es"
 # policy», HTML). Ninguna combinación da `null` en un POST https al mismo origen (tests/unit/test_referrer_panel.py).
 CABECERAS = {
     "content-security-policy": (
-        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; "
+        # ADR 0023, D2, sin `img-src` ni `connect-src`: nada los usa (los glifos son SVG en línea y no hay fetch), y sin ellos
+        # vale `default-src 'none'`. Los abrirá la fase que los necesite.
+        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
         "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     ),
     "x-content-type-options": "nosniff",
@@ -147,21 +149,24 @@ class _Guardia:
                     cabeceras["cache-control"] = CACHE_ESTATICOS
             await send(mensaje)
 
-        if not libre and self.en_curso >= self.tope:
-            ocupado = PlainTextResponse("Panel ocupado, prueba otra vez", status_code=503, headers={"retry-after": "1"})
-            await ocupado(scope, receive, enviar)
-            return
-        self.en_curso += not libre
+        cuenta = False
         try:
-            peticion = Request(scope)
-            rechazo = self._rechazo(peticion)
-            await (rechazo or self.app)(scope, receive, enviar)
+            # El tope, después de la autenticación: sin credenciales, 401 aunque esté lleno (y un rechazo no ocupa sitio).
+            rechazo = self._rechazo(Request(scope))
+            if rechazo is None and not libre and self.en_curso >= self.tope:
+                rechazo = PlainTextResponse("Panel ocupado, prueba otra vez", status_code=503, headers={"retry-after": "1"})
+            if rechazo is not None:
+                await rechazo(scope, receive, enviar)
+                return
+            cuenta = not libre
+            self.en_curso += cuenta
+            await self.app(scope, receive, enviar)
         except Exception as e:  # noqa: BLE001 — sin traza ni mensaje: solo el tipo
             self.registro("petición fallida:", type(e).__name__)
             if not empezada:
                 await PlainTextResponse("Error interno", status_code=500)(scope, receive, enviar)
         finally:
-            self.en_curso -= not libre
+            self.en_curso -= cuenta
 
     def _rechazo(self, peticion: Request) -> Response | None:
         if peticion.url.path in RUTAS_SIN_USUARIO:

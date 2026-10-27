@@ -118,7 +118,7 @@ def test_parar_sin_usuario_401_y_nada_escrito(cliente, repo):
 def test_csp_estricta_en_todas_las_respuestas(cliente, ruta, cabeceras):
     r = cliente.get(ruta, headers=cabeceras)
     assert r.headers["content-security-policy"] == (
-        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; "
+        "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
         "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     assert r.headers["x-content-type-options"] == "nosniff"

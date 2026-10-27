@@ -135,6 +135,13 @@ def _abrir(cdp, ancho, tema):
     return t, s
 
 
+def _ir(cdp, s, origen, ruta):
+    """Navega y espera, con plazo, a que la página cargada sea la de `ruta` (y no la anterior aún en pantalla)."""
+    cdp.enviar("Page.navigate", {"url": origen + ruta}, sesion=s)
+    cargada = f"location.pathname + location.search === {json.dumps(ruta)} && document.readyState === 'complete'"
+    assert _esperar(lambda: cdp.evaluar(s, cargada)), f"{ruta} no terminó de cargar"
+
+
 def _auditar(cdp, s, axe_js):
     assert _esperar(lambda: cdp.evaluar(s, "document.readyState === 'complete' && !!document.querySelector('main')"))
     cdp.evaluar(s, axe_js + "; true", espera=60)
@@ -149,16 +156,14 @@ def test_axe_sin_infracciones_wcag22_aa_ni_scroll_horizontal(chromium, panel, ax
     cdp = Cdp(chromium, Registro())
     try:
         t, s = _abrir(cdp, ancho, tema)
-        assert cdp.evaluar(s, f"matchMedia('(prefers-color-scheme: {tema})').matches") is not False
+        assert cdp.evaluar(s, f"matchMedia('(prefers-color-scheme: {tema})').matches") is True
         for nombre, ruta in PANTALLAS.items():
-            cdp.enviar("Page.navigate", {"url": origen + ruta}, sesion=s)
-            time.sleep(0.2)
+            _ir(cdp, s, origen, ruta)
             infracciones, sin_scroll = _auditar(cdp, s, axe)
             assert infracciones == [], f"{nombre} ({ancho} px, {tema}): {infracciones}"
             assert sin_scroll, f"{nombre} ({ancho} px, {tema}): barra de desplazamiento horizontal"
         # «Grabar» sin marcar a nadie: el 400 con su aviso.
-        cdp.enviar("Page.navigate", {"url": origen + "/grabar"}, sesion=s)
-        assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('form[method=post]')"))
+        _ir(cdp, s, origen, "/grabar")
         cdp.evaluar(s, "document.querySelector('form[method=post] button[type=submit]').click(); true")
         assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('[role=alert]')"))
         infracciones, sin_scroll = _auditar(cdp, s, axe)
@@ -174,14 +179,13 @@ def test_el_tema_elegido_se_recuerda_y_cambia_los_colores(chromium, panel):
     fondo = "getComputedStyle(document.body).backgroundColor"
     try:
         t, s = _abrir(cdp, 1280, "dark")
-        cdp.enviar("Page.navigate", {"url": origen + "/"}, sesion=s)
+        _ir(cdp, s, origen, "/")
         assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('#tema:not([hidden])')"))
         assert cdp.evaluar(s, fondo) == "rgb(26, 24, 32)"
         cdp.evaluar(s, "document.querySelector('#tema').click(); true")
         assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
         assert cdp.evaluar(s, "document.querySelector('#tema').getAttribute('aria-pressed')") == "true"
-        cdp.enviar("Page.navigate", {"url": origen + "/grabar"}, sesion=s)
-        assert _esperar(lambda: cdp.evaluar(s, "document.readyState === 'complete'"))
+        _ir(cdp, s, origen, "/grabar")
         assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
         cdp.cerrar_pagina(t)
     finally:

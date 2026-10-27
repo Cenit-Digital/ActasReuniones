@@ -259,8 +259,11 @@ def test_tope_de_peticiones_en_curso_salvo_la_sonda_y_los_estaticos():
                 estados["reintentar"] = int(tercera.headers["retry-after"])
                 estados["salud"] = (await c.get("/salud")).status_code
                 estados["fuente"] = (await c.get("/fuentes/manrope-latin.woff2")).status_code
+                # Sin el secreto de Traefik, 401 aunque el tope esté lleno: la autenticación va antes que el 503.
+                estados["sin_credenciales"] = (await c.get("/buscar", headers={"x-actas-proxy": "otro"})).status_code
                 soltar.set()
             estados["despues"] = (await c.get("/buscar", params={"q": "hola"})).status_code
 
     anyio.run(todas)
-    assert estados == {"tercera": 503, "reintentar": 1, "salud": 200, "fuente": 200, "lenta1": 200, "lenta2": 200, "despues": 200}
+    esperados = {"tercera": 503, "reintentar": 1, "salud": 200, "fuente": 200, "sin_credenciales": 401}
+    assert estados == {**esperados, "lenta1": 200, "lenta2": 200, "despues": 200}

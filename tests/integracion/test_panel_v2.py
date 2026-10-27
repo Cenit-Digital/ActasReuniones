@@ -17,7 +17,7 @@ SECRETO = "secreto-del-proxy"
 USUARIO = {"x-actas-proxy": SECRETO, "x-actas-usuario": "panel"}
 PAGINAS = ["/", f"/reuniones/{RIDS['transcrita']}", "/buscar?q=presupuesto", "/grabar"]
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; connect-src 'self'; "
+    "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; "
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
 
