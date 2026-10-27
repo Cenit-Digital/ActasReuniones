@@ -21,5 +21,9 @@ FROM docker.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e515
 COPY --from=construir /opt/actas/venv /opt/actas/venv
 ENV PATH=/opt/actas/venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000
+# El commit de la imagen, para el latido del supervisor (V4 de KubernetesInfrastructure#298): lo pasa imagen.yml (build-args).
+# Al final, para no invalidar la caché de las capas de arriba.
+ARG REVISION=""
+ENV ACTAS_REVISION=$REVISION
 ENTRYPOINT ["/opt/actas/venv/bin/python", "-I", "-u", "-m"]
 CMD ["actas"]

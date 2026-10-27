@@ -110,6 +110,9 @@ class _Repo:
     def salas(self):
         return []
 
+    def diagnostico(self, _rid):
+        return {"eventos": [], "latido": None, "latido_hace_s": None, "fallos_transcribir_1h": 0}
+
 
 @pytest.fixture
 def cliente():

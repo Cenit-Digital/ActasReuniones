@@ -56,6 +56,7 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=supervisor
           cache-to: type=gha,mode=max,scope=supervisor
+          build-args: REVISION=${{ github.sha }}
           tags: ${{ env.PRUEBA }}
       - name: Humo (raíz de solo lectura, sin capacidades, usuario 1000)
         run: |
@@ -65,7 +66,9 @@ jobs:
           { r actas.cli 2>&1 || true; } | grep -q "python -m actas.cli grabar"
           # Las migraciones van dentro del paquete instalado.
           docker run --rm --read-only --user 1000:1000 --entrypoint /opt/actas/venv/bin/python "$PRUEBA" -I -c \
-            "from actas import base; assert [n for n, _ in base._migraciones()] == ['0001_esquema.sql', '0002_panel.sql', '0003_salas.sql']"
+            "from actas import base; assert [n for n, _ in base._migraciones()] == ['0001_esquema.sql', '0002_panel.sql', '0003_salas.sql', '0005_eventos.sql']"
+          # El commit va dentro de la imagen, para el latido del supervisor (V4 de KubernetesInfrastructure#298).
+          docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$PRUEBA" | grep -qx "ACTAS_REVISION=$GITHUB_SHA"
           # Sin configuración, el supervisor falla al instante y sin trazas con secretos.
           if r actas 2>/dev/null; then echo "::error::arrancó sin configuración"; exit 1; fi
       - name: Humo del panel (raíz de solo lectura, usuario 1000, sin /tmp escribible)
@@ -202,6 +205,7 @@ jobs:
           provenance: false
           sbom: false
           cache-from: type=gha,scope=supervisor
+          build-args: REVISION=${{ github.sha }}
           tags: ${{ env.IMAGEN }}:sha-${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}

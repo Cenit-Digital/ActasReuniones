@@ -7,10 +7,16 @@ Cada vuelta (cada 5 s):
    (@a46; sin sala, `error` con el motivo `sala`).
 3. Envía a la plataforma las reuniones `grabada` (@a8) y consulta las `transcribiendo` hasta `listo`; con el texto guardado,
    borra su audio del tmpfs (@a10).
+4. Atiende los «Reintentar» del panel (@a57): si el audio sigue en el tmpfs, la reunión vuelve de `error` a `grabada`.
 La purga del audio de más de 7 días y del huérfano corre al arrancar y cada hora.
+
+Cada cambio de estado deja su evento en la misma transacción (@a54, Repositorio._mover), y también las respuestas de
+transcribir, el aviso de socios y la purga del audio: el historial del panel (V4 de KubernetesInfrastructure#298). Al final de
+cada vuelta escribe el latido: Chromium, imagen, tmpfs, la última respuesta de transcribir y qué reuniones conservan audio.
 """
 
 import os
+import re
 import shutil
 import stat
 import time
@@ -35,6 +41,8 @@ from actas.transcripcion import TranscripcionNoValida, segmentos_de
 
 VIGILANCIA_S = 60
 PURGA_S = 3600
+CHROMIUM_S = 30  # cada cuánto se pregunta a Chromium su versión para el latido (una petición HTTP local con 5 s de plazo)
+_VERSION = re.compile(r"[A-Za-z0-9._/:-]{1,80}", re.ASCII)  # la forma que admite el CHECK del latido
 
 
 class Grabador(Protocol):
@@ -58,6 +66,8 @@ class _Activa:
     inicio_s: float
     ultima_vigilancia_s: float
     parada: str | None = None  # motivo de una parada ya hecha cuyo cambio de estado aún no llegó a la base
+    completas: bool = True  # si todas las descargas terminaron al parar
+    faltan: int = 0  # socios conformes que no publican, en el último aviso anotado
 
 
 @dataclass
@@ -78,13 +88,20 @@ class Supervisor:
         registro: Registro,
         metricas: Metricas,
         reloj: Callable[[], float] = time.time,
+        chromium: Callable[[], str] | None = None,
+        imagen: str = "",
     ) -> None:
+        """`chromium`: la versión del navegador (lanza si no responde); `imagen`: la de este proceso (`sha-<commit>`)."""
         self.repo, self.plataforma, self.sala_de, self.nueva_grabacion = repo, plataforma, sala_de, nueva_grabacion
         self.raiz, self.log, self.metricas, self.reloj = raiz, registro, metricas, reloj
+        self.chromium, self.imagen = chromium, imagen
         self.activa: _Activa | None = None
         self.envios: dict[str, _Sondeo] = {}
         self.sondeos: dict[str, _Sondeo] = {}
         self.ultima_purga_s = 0.0
+        self.version_chromium: str | None = None
+        self.ultimo_chromium_s: float | None = None
+        self.transcribir: int | None = None  # código de la última respuesta de transcribir (0: sin respuesta)
 
     # ── Arranque y parada del proceso ─────────────────────────────────────────────────────────────────────────────────
 
@@ -120,6 +137,7 @@ class Supervisor:
         else:
             self._recuperar_huerfanas()
             self._atender_pedida()
+        self._atender_reintentos()
         for r in self.repo.en_estado(Estado.GRABADA):
             self._a_salvo(self._enviar, r, Estado.GRABADA)
         for r in self.repo.en_estado(Estado.TRANSCRIBIENDO):
@@ -127,8 +145,9 @@ class Supervisor:
         if self.reloj() - self.ultima_purga_s >= PURGA_S:
             self.purgar()
         self.metricas.por_estado = self.repo.cuenta_por_estado()
-        self.metricas.grabaciones_bytes = self._ocupacion()
+        self.metricas.grabaciones_bytes, con_audio = self._tmpfs()
         self.metricas.ultimo_paso_s = self.reloj()
+        self._latir(con_audio)
 
     def _a_salvo(self, etapa: Callable[[dict[str, Any]], None], r: dict[str, Any], estado: Estado) -> None:
         """Un fallo inesperado con una reunión (una respuesta con forma rara, un dato que la base no admite) la lleva a
@@ -173,7 +192,7 @@ class Supervisor:
             return
         grabador = self.nueva_grabacion(sala, peticion.socios, self.raiz / r["id"])
         try:
-            self.repo.mover(r["id"], Estado.PEDIDA, Estado.GRABANDO, inicio=True)
+            self.repo.mover(r["id"], Estado.PEDIDA, Estado.GRABANDO, inicio=True, detalle={"socios": len(peticion.socios)})
         except TransicionNoValida:
             return
         try:
@@ -210,6 +229,9 @@ class Supervisor:
             faltan = sin_coincidencia(vistos, self.reloj() - a.inicio_s)
             self.metricas.aviso_sin_coincidencia = int(bool(faltan))
             self.metricas.socios_vistos = len(a.socios) - len([s for s in a.socios if s not in vistos.get(s, [])])
+            if len(faltan) != a.faltan:
+                a.faltan = len(faltan)
+                self.repo.anotar_evento(a.rid, "aviso", {"faltan": a.faltan})
             if faltan:
                 # Solo el número: los IDs que publican en la sala los elige cada cliente.
                 self.log(f"AVISO: {len(faltan)} socio(s) conforme(s) no publican en la sala; ¿entraron sin su enlace con &push?")
@@ -224,13 +246,13 @@ class Supervisor:
             completas = False
         if not completas:
             self.log("alguna descarga no terminó: se envía lo que haya")
-        a.parada = motivo
+        a.parada, a.completas = motivo, bool(completas)
         self._anotar_parada(a)
 
     def _anotar_parada(self, a: _Activa) -> None:
         """Si la base falla aquí, la grabación sigue «activa» con la parada hecha y la vuelta siguiente lo reintenta."""
         assert a.parada is not None
-        self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=a.parada, fin=True)
+        self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=a.parada, fin=True, detalle={"completas": a.completas})
         self.activa = None
         self.metricas.grabando = self.metricas.aviso_sin_coincidencia = 0
         self.metricas.socios_esperados = self.metricas.socios_vistos = 0
@@ -248,24 +270,19 @@ class Supervisor:
             self._error(rid, Estado.GRABADA, "plazo_envio")
             return
         directorio = self.raiz / rid
+        nombres = self._nombres(rid)
         try:
-            nombres = (
-                sorted(e.name for e in os.scandir(directorio)) if directorio.is_dir() and not directorio.is_symlink() else []
-            )
             pistas = pistas_de(nombres, list(r["socios"]))
-        except PistasNoValidas as e:
-            self.log("pistas no válidas:", e)
-            self._error(rid, Estado.GRABADA, "pistas")
-            return
-        try:
             codigo, cuerpo = self.plataforma.crear(directorio, pistas, rid)
-        except PistasNoValidas as e:  # enlaces, FIFOs o ficheros vacíos en el tmpfs: no se sube nada
+        except PistasNoValidas as e:  # o enlaces, FIFOs o ficheros vacíos en el tmpfs (plataforma._abrir): no se sube nada
             self.log("pistas no válidas:", e)
-            self._error(rid, Estado.GRABADA, "pistas")
+            self._error(rid, Estado.GRABADA, "pistas", {"causa": e.causa, "ficheros": len(nombres)})
             return
         d = interpretar_creacion(codigo, cuerpo)
+        n = envio.intento + 1 if envio else 0
+        if d.accion != "seguir":  # el 201 se anota después de guardar el trabajo: si fallara antes, se volvería a crear
+            self._respuesta(rid, "envio", codigo, d.accion, d.motivo, n)
         if d.accion == "reintentar":
-            n = envio.intento + 1 if envio else 0
             self.envios[rid] = _Sondeo(n, self.reloj() + espera(n), envio.desde_s if envio else self.reloj())
             self.log("la plataforma no respondió:", d.motivo)
             return
@@ -273,7 +290,8 @@ class Supervisor:
         if d.accion == "error":
             self._error(rid, Estado.GRABADA, d.motivo or "plataforma")
             return
-        self.repo.mover(rid, Estado.GRABADA, Estado.TRANSCRIBIENDO, trabajo_id=d.trabajo_id)
+        self.repo.mover(rid, Estado.GRABADA, Estado.TRANSCRIBIENDO, trabajo_id=d.trabajo_id, detalle={"pistas": len(pistas)})
+        self._respuesta(rid, "envio", codigo, d.accion, d.motivo, n)
         self.sondeos[rid] = _Sondeo(0, self.reloj() + espera(0), self.reloj())
         self.log("enviada a la plataforma:", len(pistas), "pistas")
 
@@ -288,6 +306,10 @@ class Supervisor:
             return
         codigo, cuerpo = self.plataforma.estado(r["trabajo_id"])
         d = interpretar_estado(codigo, cuerpo)
+        if codigo != 200 or d.accion == "error":  # las consultas en curso (un 200 cada minuto) no van al historial
+            self._respuesta(rid, "consulta", codigo, d.accion, d.motivo)
+        else:
+            self.transcribir = codigo
         if d.accion == "seguir":
             s.intento += 1
             s.proximo_s = self.reloj() + espera(s.intento)
@@ -308,9 +330,81 @@ class Supervisor:
 
     # ── Errores y purga ───────────────────────────────────────────────────────────────────────────────────────────────
 
-    def _error(self, rid: str, desde: Estado, motivo: str) -> None:
+    def _respuesta(self, rid: str, tipo: str, codigo: int, accion: str, motivo: str | None, intento: int | None = None) -> None:
+        """Una respuesta de transcribir: al historial de la reunión y, para el latido, como la última conocida."""
+        self.transcribir = codigo
+        detalle: dict[str, Any] = {"codigo": codigo, "accion": accion}
+        if intento is not None:
+            detalle["intento"] = intento
+        if accion == "error" and motivo:
+            detalle["motivo"] = motivo
+        self.repo.anotar_evento(rid, tipo, detalle)
+
+    # ── Reintentos del panel y latido ──────────────────────────────────────────────────────────────────────────────────
+
+    def _nombres(self, rid: str) -> list[str]:
+        directorio = self.raiz / rid
+        if not directorio.is_dir() or directorio.is_symlink():
+            return []
+        return sorted(e.name for e in os.scandir(directorio))
+
+    def _atender_reintentos(self) -> None:
+        """@a57: «Reintentar» del panel. Con pistas que se pueden enviar, la reunión vuelve a `grabada` y esta misma vuelta la
+        envía; si no (el audio ya se purgó, o nunca lo hubo), la petición se descarta y la reunión sigue en error."""
+        for r in self.repo.reintentos_pedidos():
+            try:
+                self._atender_reintento(r)
+            except psycopg.OperationalError:
+                raise  # la base caída un momento: la petición sigue ahí y la vuelta siguiente la atiende
+            except Exception as e:  # noqa: BLE001 — una petición que falla no puede repetirse en cada vuelta y parar el resto
+                self.log("reintento fallido:", type(e).__name__)
+                self.repo.atender_reintento(r["id"], reenviar=False, resultado="interno")
+
+    def _atender_reintento(self, r: dict[str, Any]) -> None:
         try:
-            self.repo.mover(rid, desde, Estado.ERROR, motivo=motivo)
+            pistas_de(self._nombres(r["id"]), list(r["socios"]))
+        except PistasNoValidas as e:
+            self.repo.atender_reintento(r["id"], reenviar=False, resultado=e.causa)
+            self.log("reintento sin pistas que enviar:", e.causa)
+            return
+        self.envios.pop(r["id"], None)
+        self.sondeos.pop(r["id"], None)
+        self.repo.atender_reintento(r["id"], reenviar=True, resultado="reenviada")
+        self.log("reintento pedido desde el panel")
+
+    def _latir(self, con_audio: list[str]) -> None:
+        """El latido del panel (@a56). Un fallo aquí no tumba la vuelta: el panel verá el latido viejo."""
+        try:
+            self.repo.latir(
+                {
+                    "chromium": self._version_chromium(),
+                    "imagen": self.imagen or None,
+                    "grabaciones_bytes": self.metricas.grabaciones_bytes,
+                    "grabaciones_total": shutil.disk_usage(self.raiz).total if self.raiz.is_dir() else None,
+                    "con_audio": con_audio,
+                    "transcribir_codigo": self.transcribir,
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            self.log("latido fallido:", type(e).__name__)
+
+    def _version_chromium(self) -> str | None:
+        if self.chromium is None:
+            return None
+        if self.ultimo_chromium_s is None or self.reloj() - self.ultimo_chromium_s >= CHROMIUM_S:
+            self.ultimo_chromium_s = self.reloj()
+            try:
+                version = self.chromium()
+                self.version_chromium = version if _VERSION.fullmatch(version) else "desconocida"
+            except Exception:  # noqa: BLE001 — no responde: el latido lo dice
+                self.version_chromium = None
+        return self.version_chromium
+
+    # ── Errores y purga (sigue) ───────────────────────────────────────────────────────────────────────────────────────
+
+    def _error(self, rid: str, desde: Estado, motivo: str, detalle: dict[str, Any] | None = None) -> None:
+        try:
+            self.repo.mover(rid, desde, Estado.ERROR, motivo=motivo, detalle=detalle)
         except TransicionNoValida:
             return
         self.metricas.sumar("errores_total")
@@ -335,17 +429,22 @@ class Supervisor:
             d.unlink()
         self.repo.anotar_purga(nombre if _es_reunion(nombre) else None, motivo, ficheros, octetos)
 
-    def _ocupacion(self) -> int:
-        """Bytes en el tmpfs, sin seguir enlaces: si se acerca al sizeLimit, el kubelet desalojaría el pod y la grabación."""
-        total = 0
+    def _tmpfs(self) -> tuple[int, list[str]]:
+        """Bytes en el tmpfs, sin seguir enlaces (si se acerca al sizeLimit, el kubelet desalojaría el pod y la grabación), y las
+        reuniones que aún tienen alguna grabación (`.webm` no vacío) para el latido, en el mismo recorrido."""
+        total, con_audio = 0, set()
         if self.raiz.is_dir():
             for raiz, _, archivos in os.walk(self.raiz, followlinks=False):
+                reunion = Path(raiz).name if Path(raiz).parent == self.raiz and _es_reunion(Path(raiz).name) else None
                 for a in archivos:
                     try:
-                        total += os.lstat(os.path.join(raiz, a)).st_size
-                    except OSError:
-                        pass
-        return total
+                        st = os.lstat(os.path.join(raiz, a))
+                    except OSError:  # la purga lo borró mientras se recorría
+                        continue
+                    total += st.st_size
+                    if reunion and st.st_size and stat.S_ISREG(st.st_mode) and a.endswith(".webm"):
+                        con_audio.add(reunion)
+        return total, sorted(con_audio)
 
     def purgar(self, mtime: Callable[[Path], float] | None = None) -> None:
         """@a10: borra el audio de las reuniones transcritas, el de más de 7 días (contados desde la base) y lo que no es de

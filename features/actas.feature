@@ -135,3 +135,35 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Dado conexiones keep-alive ociosas de Traefik con el panel
     Cuando el kubelet pide «/salud»
     Entonces responde 200, y el tope de peticiones en curso no cuenta la sonda
+
+  # V4 de KubernetesInfrastructure#298: registros, diagnóstico y reintentar (ADR 0023, decisión 7).
+
+  Escenario: @a54 cada transición del supervisor deja su evento
+    Dado el supervisor atendiendo una reunión
+    Cuando la reunión cambia de estado (empezar, parar, enviar, transcribir, error, rescate o reintento)
+    Entonces queda una fila en «eventos», en la misma transacción que el cambio, con su tipo y un detalle de la lista blanca
+    Y también quedan las respuestas de transcribir, el aviso de socios y el borrado del audio
+
+  Escenario: @a55 el historial no admite nada fuera de la lista blanca
+    Dado un detalle con una clave fuera de la lista blanca, un valor que no es un código o una cadena con la contraseña de la sala
+    Cuando se intenta insertar
+    Entonces se rechaza: la base, por la lista blanca; el supervisor, además, por los secretos que solo él conoce
+
+  Escenario: @a56 diagnóstico de una reunión en error
+    Dado una reunión en error
+    Cuando Pablo abre su ficha
+    Entonces ve el motivo en lenguaje claro, «qué hacer» y el historial
+    Y las comprobaciones: latido de menos de 30 s, Chromium, transcribir, espacio de grabación y versiones
+    Y un enlace a los registros crudos en la consola
+
+  Escenario: @a56 la reunión real en error por pistas, anterior al historial
+    Dado la reunión de 6 s en «error: pistas», con la parada pedida a los 4 s y sin eventos
+    Cuando Pablo abre su ficha
+    Entonces el panel dice lo que duró, que no consta qué pista falló y que «Reintentar» no lo arregla
+    Y no ofrece «Reintentar»
+
+  Escenario: @a57 reintentar desde el panel
+    Dado una reunión en error cuyo motivo se arregla reenviando y con el audio aún en el supervisor
+    Cuando Pablo pulsa «Reintentar»
+    Entonces el supervisor la pasa a «grabada» y la reenvía, sin terminal
+    Y si el audio ya no está, la petición se descarta y la reunión sigue en error

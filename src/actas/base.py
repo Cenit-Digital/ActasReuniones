@@ -16,7 +16,9 @@ import psycopg
 import psycopg.conninfo
 from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
+from actas import eventos
 from actas.conformidad import Peticion
 from actas.estados import Estado, TransicionNoValida, transicion
 from actas.formulario import Socio
@@ -60,11 +62,19 @@ def migrar(dsn: str, esquema: str = "actas", password: str | None = None) -> lis
 
 
 class Repositorio:
-    def __init__(self, dsn: str, esquema: str = "actas", ajustes: Mapping[str, str] | None = None) -> None:
-        """`ajustes`: parámetros de la sesión (set_config) en cada conexión; el panel pide TimeZone y statement_timeout."""
+    def __init__(
+        self,
+        dsn: str,
+        esquema: str = "actas",
+        ajustes: Mapping[str, str] | None = None,
+        secretos: Sequence[str] = (),
+    ) -> None:
+        """`ajustes`: parámetros de la sesión (set_config) en cada conexión; el panel pide TimeZone y statement_timeout.
+        `secretos`: los que ningún evento puede llevar (@a55; los mismos que redacta el registro del supervisor)."""
         self._dsn = dsn
         self._esquema = _esquema(esquema)
         self._ajustes = dict(ajustes or {})
+        self._secretos = secretos  # sin copiar: el registro añade la contraseña de cada sala al descifrarla (V2)
 
     def cerrar(self) -> None:
         """Sin pool: una conexión por operación (como mucho unas pocas por minuto)."""
@@ -147,13 +157,15 @@ class Repositorio:
         inicio: bool = False,
         fin: bool = False,
         trabajo_id: str | None = None,
+        detalle: Mapping[str, Any] | None = None,
     ) -> None:
+        """`detalle`: lo que se añade al evento del cambio de estado (p. ej., la causa de un error de pistas)."""
         transicion(desde, hasta)
         with self.conexion() as c:
-            self._mover(c, rid, desde, hasta, motivo, inicio, fin, trabajo_id)
+            self._mover(c, rid, desde, hasta, motivo, inicio, fin, trabajo_id, detalle)
 
-    @staticmethod
     def _mover(
+        self,
         c: psycopg.Connection[Any],
         rid: str,
         desde: Estado,
@@ -162,17 +174,108 @@ class Repositorio:
         inicio: bool = False,
         fin: bool = False,
         trabajo_id: str | None = None,
+        detalle: Mapping[str, Any] | None = None,
     ) -> None:
+        """El cambio de estado y su evento (@a54), en la misma transacción: o los dos, o ninguno. Salir de `error`, por la vía
+        que sea (el panel o `actas.sh reintentar`), consume la petición de «Reintentar» que hubiera."""
+        evento = {"desde": desde.value, "hasta": hasta.value, **({"motivo": motivo} if motivo else {}), **(detalle or {})}
+        evento = eventos.validar("estado", evento, self._secretos)
         cur = c.execute(
             """UPDATE reuniones SET estado = %s, actualizado_en = now(), motivo = COALESCE(%s, motivo),
                    inicio = CASE WHEN %s THEN now() ELSE inicio END,
                    fin = CASE WHEN %s THEN now() ELSE fin END,
-                   trabajo_id = COALESCE(%s, trabajo_id)
+                   trabajo_id = COALESCE(%s, trabajo_id),
+                   reintento_pedido_en = CASE WHEN %s THEN NULL ELSE reintento_pedido_en END
                WHERE id = %s AND estado = %s""",
-            (hasta.value, motivo, inicio, fin, trabajo_id, rid, desde.value),
+            (hasta.value, motivo, inicio, fin, trabajo_id, desde == Estado.ERROR, rid, desde.value),
         )
         if cur.rowcount != 1:
             raise TransicionNoValida(f"la reunión no estaba en {desde}")
+        self._evento(c, rid, "estado", evento)
+
+    def _evento(self, c: psycopg.Connection[Any], rid: str | None, tipo: str, detalle: Mapping[str, Any]) -> None:
+        c.execute(
+            "INSERT INTO eventos (reunion_id, tipo, detalle) VALUES (%s, %s, %s)",
+            (rid, tipo, Jsonb(eventos.validar(tipo, detalle, self._secretos))),
+        )
+
+    def anotar_evento(self, rid: str | None, tipo: str, detalle: Mapping[str, Any]) -> None:
+        """@a55: solo la lista blanca y ningún secreto (eventos.validar en `_evento` y el CHECK de la base)."""
+        with self.conexion() as c:
+            self._evento(c, rid, tipo, detalle)
+
+    def eventos(self, rid: str) -> list[dict[str, Any]]:
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT momento, tipo, detalle FROM eventos WHERE reunion_id = %s ORDER BY momento, id", (rid,)
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def latir(self, detalle: Mapping[str, Any]) -> None:
+        """El latido del supervisor: una sola fila, reescrita en cada vuelta."""
+        with self.conexion() as c:
+            c.execute(
+                "INSERT INTO latido (unico, momento, detalle) VALUES (true, now(), %s) "
+                "ON CONFLICT (unico) DO UPDATE SET momento = excluded.momento, detalle = excluded.detalle",
+                (Jsonb(dict(detalle)),),
+            )
+
+    def latido(self) -> tuple[dict[str, Any], float] | None:
+        """(detalle, segundos desde el último latido según el reloj de la base) o None si el supervisor nunca latió."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT detalle, extract(epoch FROM now() - momento)::float8 FROM latido").fetchone()
+        return (fila[0], float(fila[1])) if fila else None
+
+    def diagnostico(self, rid: str) -> dict[str, Any]:
+        """Lo que el panel enseña de una reunión (@a56) con una sola conexión: su historial, el latido y los fallos de transcribir
+        de la última hora (envíos y consultas sin un 200 o 201, o que acabaron en error)."""
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            historial = cur.execute(
+                "SELECT momento, tipo, detalle FROM eventos WHERE reunion_id = %s ORDER BY momento, id", (rid,)
+            ).fetchall()
+            latido = c.execute("SELECT detalle, extract(epoch FROM now() - momento)::float8 FROM latido").fetchone()
+            fallos = c.execute(
+                """SELECT count(*) FROM eventos
+                   WHERE tipo IN ('envio', 'consulta') AND momento > now() - interval '1 hour'
+                     AND (detalle->>'accion' IN ('reintentar', 'error')
+                          OR detalle->'codigo' NOT IN ('200'::jsonb, '201'::jsonb))"""
+            ).fetchone()
+        return {
+            "eventos": [_fila(f) for f in historial],
+            "latido": latido[0] if latido else None,
+            "latido_hace_s": float(latido[1]) if latido else None,
+            "fallos_transcribir_1h": int(fallos[0]) if fallos else 0,
+        }
+
+    def pedir_reintento(self, rid: str, usuario: str) -> bool | None:
+        """«Reintentar» del panel (@a57): solo en una reunión en error y sin otra petición pendiente. None si no existe. Por la
+        función `pedir_reintento` de la migración 0005: el rol del panel no tiene UPDATE de esas columnas."""
+        with self.conexion() as c:
+            fila = c.execute("SELECT pedir_reintento(%s, %s)", (rid, usuario)).fetchone()
+        return fila[0] if fila else None
+
+    def reintentos_pedidos(self) -> list[dict[str, Any]]:
+        with self.conexion() as c, c.cursor(row_factory=dict_row) as cur:
+            filas = cur.execute(
+                "SELECT * FROM reuniones WHERE estado = 'error' AND reintento_pedido_en IS NOT NULL "
+                "ORDER BY reintento_pedido_en, id"
+            ).fetchall()
+        return [_fila(f) for f in filas]
+
+    def atender_reintento(self, rid: str, reenviar: bool, resultado: str) -> None:
+        """El supervisor atiende la petición: con `reenviar`, error → grabada; si no, la reunión sigue en error. En los dos
+        casos la petición se limpia y queda el evento `reintento` con quién lo pidió, en la misma transacción."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "SELECT reintento_pedido_por FROM reuniones WHERE id = %s AND estado = 'error' FOR UPDATE", (rid,)
+            ).fetchone()
+            if fila is None:
+                return
+            if reenviar:
+                self._mover(c, rid, Estado.ERROR, Estado.GRABADA, motivo="reintento")
+            else:
+                c.execute("UPDATE reuniones SET reintento_pedido_en = NULL WHERE id = %s", (rid,))
+            self._evento(c, rid, "reintento", {"usuario": fila[0], "resultado": resultado})
 
     def pedir_parada(self) -> str | None:
         """La petición de parar la grabación activa. None si no hay ninguna."""
@@ -186,7 +289,7 @@ class Repositorio:
     def guardar_transcripcion(self, rid: str, segmentos: Sequence[dict[str, Any]]) -> None:
         """@a8: los segmentos y el paso a `transcrita` en una sola transacción; reintentar no duplica."""
         with self.conexion() as c:
-            self._mover(c, rid, Estado.TRANSCRIBIENDO, Estado.TRANSCRITA)
+            self._mover(c, rid, Estado.TRANSCRIBIENDO, Estado.TRANSCRITA, detalle={"segmentos": len(segmentos)})
             with c.cursor() as cur:
                 cur.executemany(
                     "INSERT INTO segmentos (reunion_id, hablante, inicio_ms, fin_ms, texto) VALUES (%s, %s, %s, %s, %s)",
@@ -272,11 +375,20 @@ class Repositorio:
         return True
 
     def anotar_purga(self, rid: str | None, motivo: str, ficheros: int, octetos: int) -> None:
+        """La traza de la purga y, si es de una reunión, su evento `audio_borrado` en el historial."""
         with self.conexion() as c:
             c.execute(
                 "INSERT INTO purgas (reunion_id, motivo, ficheros, bytes) VALUES (%s, %s, %s, %s)",
                 (rid, motivo, ficheros, octetos),
             )
+            if rid is not None:  # un directorio con nombre de uuid que no es de ninguna reunión no deja evento
+                detalle = eventos.validar(
+                    "audio_borrado", {"motivo": motivo, "ficheros": ficheros, "bytes": octetos}, self._secretos
+                )
+                c.execute(
+                    "INSERT INTO eventos (reunion_id, tipo, detalle) SELECT id, 'audio_borrado', %s FROM reuniones WHERE id = %s",
+                    (Jsonb(detalle), rid),
+                )
 
     # ── Salas y socios (V2 de KubernetesInfrastructure#298, migración 0003) ──────────────────────────────────────────
 

@@ -104,17 +104,17 @@ def _abrir(directorio: Path, pistas: list[Pista]) -> list[tuple[int, int]]:
     try:
         dfd = os.open(directorio, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError as e:
-        raise PistasNoValidas("el directorio de la reunión no es un directorio propio") from e
+        raise PistasNoValidas("el directorio de la reunión no es un directorio propio", "directorio") from e
     try:
         for p in pistas:
             try:
                 fd = os.open(p.fichero, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
             except OSError as e:
-                raise PistasNoValidas("pista que no se puede abrir sin seguir enlaces") from e
+                raise PistasNoValidas("pista que no se puede abrir sin seguir enlaces", "fichero") from e
             st = os.fstat(fd)
             if not stat.S_ISREG(st.st_mode) or not 0 < st.st_size <= MAX_PISTA_BYTES:
                 os.close(fd)
-                raise PistasNoValidas("pista que no es un fichero regular con audio")
+                raise PistasNoValidas("pista que no es un fichero regular con audio", "fichero")
             abiertas.append((fd, st.st_size))
     except PistasNoValidas:
         for fd, _ in abiertas:

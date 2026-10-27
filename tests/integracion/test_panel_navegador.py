@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from panel_falso import MAESTRA, RIDS, SALA, RepoFalso
+from panel_falso import MAESTRA, RID_PISTAS, RIDS, SALA, RepoFalso
 
 from actas.cdp import Cdp
 from actas.panel import crear_app
@@ -96,12 +96,28 @@ def test_parar_desde_el_navegador(chromium, panel, ruta):
         cdp.cerrar()
 
 
+def test_reintentar_desde_el_navegador(chromium, panel):
+    """@a57: «Reintentar» es un formulario POST del propio panel, sin JavaScript: lleva el Origin y pasa la guardia."""
+    origen, repo, posts = panel
+    cdp = Cdp(chromium, Registro())
+    rid = RIDS["error"]
+    try:
+        t, s = _enviar_formulario(cdp, origen + f"/reuniones/{rid}", "true")
+        assert _esperar(lambda: repo.reintentos), f"el panel rechazó el POST: Origin {[p.get('origin') for p in posts]}"
+        assert posts[0]["origin"] == origen and repo.reintentos == [(rid, "panel")]
+        assert _esperar(lambda: cdp.evaluar(s, "location.pathname + location.hash") == f"/reuniones/{rid}#diagnostico")
+        cdp.cerrar_pagina(t)
+    finally:
+        cdp.cerrar()
+
+
 # ── @a41: axe en 1280 y 390 px, en tema oscuro y claro ──────────────────────────────────────────────────────────────────
 
 PANTALLAS = {
     "lista": "/",
     "reunion": f"/reuniones/{RIDS['transcrita']}",
     "reunion-error": f"/reuniones/{RIDS['error']}",
+    "reunion-error-pistas": f"/reuniones/{RID_PISTAS}",
     "reunion-grabando": f"/reuniones/{RIDS['grabando']}",
     "buscar": "/buscar?q=presupuesto",
     "buscar-vacio": "/buscar",

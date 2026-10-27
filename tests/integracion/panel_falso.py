@@ -1,5 +1,5 @@
 """Un repositorio de mentira con todas las pantallas y todos los estados del panel, para los tests sin base (TestClient) y los de
-Chromium (formularios y axe), también «Salas y socios» (V2). Apunta lo que piden «Grabar» y «Parar»."""
+Chromium (formularios y axe), también «Salas y socios» (V2). Apunta lo que piden «Grabar», «Parar» y «Reintentar»."""
 
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,7 +12,12 @@ TRABAJO = "11111111-2222-4333-8444-555555555555"
 MAESTRA = bytes(range(32))
 ESTADOS = ["grabando", "programada", "transcribiendo", "error", "transcrita", "cancelada", "pedida", "grabada"]
 RIDS = {e: f"00000000-0000-4000-8000-00000000000{i}" for i, e in enumerate(ESTADOS, start=1)}
+# La forma de la reunión real 17d9d6ae (producción, 2026-10-27): `error: pistas`, 6 s grabando, parada pedida a los 4 s y
+# anterior al historial de eventos (V4 de KubernetesInfrastructure#298).
+RID_PISTAS = "00000000-0000-4000-8000-000000000017"
 _BASE = datetime(2026, 10, 26, 18, 0)
+IMAGEN = "sha-0123456789abcdef0123456789abcdef01234567"
+CHROMIUM = "HeadlessChrome/141.0.7390.37"
 
 
 def _reunion(i: int, e: str) -> dict[str, Any]:
@@ -31,6 +36,25 @@ def _reunion(i: int, e: str) -> dict[str, Any]:
     }
 
 
+def _pistas() -> dict[str, Any]:
+    creado = datetime(2026, 10, 27, 11, 10, 5)
+    return {
+        "id": RID_PISTAS,
+        "creado_en": creado,
+        "inicio": creado + timedelta(seconds=4.64),
+        "fin": creado + timedelta(seconds=10.51),
+        "parar_pedido_en": creado + timedelta(seconds=8.21),
+        "reintento_pedido_en": None,
+        "reintento_pedido_por": None,
+        "actualizado_en": creado + timedelta(seconds=10.55),
+        "estado": "error",
+        "motivo": "pistas",
+        "socios": ["andres", "pablo", "roberto"],
+        "pedido_por": "pablo",
+        "trabajo_id": None,
+    }
+
+
 class RepoFalso:
     def __init__(self, activa: bool = True) -> None:
         self.activa = activa
@@ -38,6 +62,18 @@ class RepoFalso:
         self.paradas = 0
         self.trabajos: list[str] = []
         self.salas_pedidas: list[str | None] = []
+        self.reintentos: list[tuple[str, str]] = []
+        # El latido: fresco, con el audio de la reunión en error (`plazo_envio`) aún en el tmpfs.
+        self.latido: dict[str, Any] | None = {
+            "chromium": CHROMIUM,
+            "imagen": IMAGEN,
+            "grabaciones_bytes": 50_331_648,
+            "grabaciones_total": 805_306_368,
+            "con_audio": [RIDS["error"]],
+            "transcribir_codigo": 503,
+        }
+        self.latido_hace_s = 4.0
+        self.fallos_transcribir_1h = 2
 
     def ultimas(self, _limite: int) -> list[dict[str, Any]]:
         return [_reunion(i, e) for i, e in enumerate(ESTADOS)]
@@ -46,7 +82,7 @@ class RepoFalso:
         return self.activa
 
     def detalle(self, rid: str) -> tuple[dict[str, Any], list[tuple[str, str]], list[tuple[str, int, int, str]]]:
-        por_id = {r["id"]: r for r in self.ultimas(0)}
+        por_id = {r["id"]: r for r in self.ultimas(0)} | {RID_PISTAS: _pistas()}
         if rid not in por_id:
             raise KeyError(rid)
         segmentos = [
@@ -110,3 +146,38 @@ class RepoFalso:
     def pedir_parada(self) -> str | None:
         self.paradas += 1
         return RIDS["grabando"] if self.activa else None
+
+    def diagnostico(self, rid: str) -> dict[str, Any]:
+        eventos: list[dict[str, Any]] = []
+        if rid == RIDS["error"]:
+            t = _BASE - timedelta(days=ESTADOS.index("error"))
+            eventos = [
+                {"momento": t, "tipo": "estado", "detalle": {"desde": "pedida", "hasta": "grabando", "socios": 2}},
+                {
+                    "momento": t + timedelta(minutes=55, seconds=31),
+                    "tipo": "estado",
+                    "detalle": {"desde": "grabando", "hasta": "grabada", "motivo": "pedida", "completas": True},
+                },
+                {
+                    "momento": t + timedelta(minutes=55, seconds=36),
+                    "tipo": "envio",
+                    "detalle": {"codigo": 503, "accion": "reintentar", "intento": 0},
+                },
+                {
+                    "momento": t + timedelta(hours=12, minutes=56),
+                    "tipo": "estado",
+                    "detalle": {"desde": "grabada", "hasta": "error", "motivo": "plazo_envio"},
+                },
+            ]
+        return {
+            "eventos": eventos,
+            "latido": self.latido,
+            "latido_hace_s": self.latido_hace_s if self.latido is not None else None,
+            "fallos_transcribir_1h": self.fallos_transcribir_1h,
+        }
+
+    def pedir_reintento(self, rid: str, usuario: str) -> bool | None:
+        self.reintentos.append((rid, usuario))
+        if rid not in RIDS.values() and rid != RID_PISTAS:
+            return None
+        return rid == RIDS["error"]

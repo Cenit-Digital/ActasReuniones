@@ -632,3 +632,226 @@ def test_al_arrancar_una_grabacion_sin_sala_se_retoma_igual(repo, tmp_path):
     sup.arrancar()
     assert usadas == [None] and GrabacionFalsa.creadas[0].reanudada and GrabacionFalsa.creadas[0].parada
     assert (repo.reunion(rid)["estado"], repo.reunion(rid)["motivo"]) == ("grabada", "reinicio_supervisor")
+
+
+# ── V4 de KubernetesInfrastructure#298: eventos (@a54), latido y reintento desde el panel (@a57) ─────────────────────────
+
+
+def _historial(repo, rid):
+    return [(e["tipo"], e["detalle"]) for e in repo.eventos(rid)]
+
+
+def test_cada_transicion_del_ciclo_completo_deja_su_evento(entorno):
+    sup, repo, plataforma, _, reloj, raiz = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    plataforma.respuestas_estado = [
+        listo([{"hablante_id": "h1", "inicio_ms": 0, "fin_ms": 1000, "texto": "Hola."}]),
+    ]
+    reloj.t += 60
+    sup.paso()
+    assert _historial(repo, rid) == [
+        ("estado", {"desde": "pedida", "hasta": "grabando", "socios": 2}),
+        ("estado", {"desde": "grabando", "hasta": "grabada", "motivo": "pedida", "completas": True}),
+        ("estado", {"desde": "grabada", "hasta": "transcribiendo", "pistas": 2}),
+        ("envio", {"codigo": 201, "accion": "seguir", "intento": 0}),
+        ("estado", {"desde": "transcribiendo", "hasta": "transcrita", "segmentos": 1}),
+        ("audio_borrado", {"motivo": "transcrita", "ficheros": 2, "bytes": 8}),
+    ]
+
+
+def test_un_error_de_pistas_anota_su_causa(entorno):
+    sup, repo, _, _, _, raiz = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO, inicio=True)
+    repo.mover(rid, Estado.GRABANDO, Estado.GRABADA, motivo="pedida", fin=True)  # sin ningún fichero: el caso de 17d9d6ae
+    sup.paso()
+    assert repo.reunion(rid)["motivo"] == "pistas"
+    assert _historial(repo, rid)[-1] == (
+        "estado",
+        {"desde": "grabada", "hasta": "error", "motivo": "pistas", "causa": "ninguna_pista", "ficheros": 0},
+    )
+
+
+def test_un_error_de_conformidad_al_empezar_deja_su_evento(entorno):
+    sup, repo, *_ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    with repo.conexion() as c:
+        c.execute("DELETE FROM conformidades WHERE reunion_id = %s", (rid,))
+    sup.paso()
+    assert _historial(repo, rid) == [("estado", {"desde": "pedida", "hasta": "error", "motivo": "conformidad"})]
+
+
+def test_si_chromium_no_empieza_queda_el_evento_del_grabador(entorno, monkeypatch):
+    sup, repo, *_ = entorno
+
+    def falla(self):
+        raise RuntimeError("sin Chromium")
+
+    monkeypatch.setattr(GrabacionFalsa, "empezar", falla)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    assert [d.get("motivo") for _, d in _historial(repo, rid)] == [None, "grabador"]
+
+
+def test_las_respuestas_de_transcribir_quedan_en_el_historial(entorno):
+    sup, repo, plataforma, _, reloj, _ = entorno
+    plataforma.respuesta_crear = (503, None)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    plataforma.respuesta_crear = (201, {"id": TID})
+    plataforma.respuestas_estado = [(502, None), (200, {"trabajo": {"estado": "error"}})]
+    reloj.t += 60
+    sup.paso()  # envío aceptado
+    reloj.t += 60
+    sup.paso()  # 502 en la consulta
+    reloj.t += 60
+    sup.paso()  # error de la plataforma
+    eventos = [(t, d) for t, d in _historial(repo, rid) if t in ("envio", "consulta")]
+    assert eventos == [
+        ("envio", {"codigo": 503, "accion": "reintentar", "intento": 0}),
+        ("envio", {"codigo": 201, "accion": "seguir", "intento": 1}),
+        ("consulta", {"codigo": 502, "accion": "seguir"}),
+        ("consulta", {"codigo": 200, "accion": "error", "motivo": "plataforma_error"}),
+    ]
+
+
+def test_el_aviso_de_socios_queda_en_el_historial_solo_al_cambiar(entorno):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("sociopablo",), "v1"))
+    sup.paso()
+    GrabacionFalsa.creadas[0].ver = {"sociopablo": ["x7kq2lm"]}
+    for _ in range(3):
+        reloj.t += 61
+        sup.paso()
+    GrabacionFalsa.creadas[0].ver = {"sociopablo": ["sociopablo"]}
+    reloj.t += 61
+    sup.paso()
+    assert [d for t, d in _historial(repo, rid) if t == "aviso"] == [{"faltan": 1}, {"faltan": 0}]
+
+
+def test_el_rescate_al_arrancar_y_la_fila_huerfana_dejan_su_evento(entorno):
+    sup, repo, plataforma, _, reloj, raiz = entorno
+    plataforma.respuesta_crear = (503, None)
+    huerfana = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(huerfana, Estado.PEDIDA, Estado.GRABANDO)
+    sup.paso()
+    assert ("estado", {"desde": "grabando", "hasta": "grabada", "motivo": "sin_grabador"}) in _historial(repo, huerfana)
+    en_curso = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    Supervisor(
+        repo=repo,
+        plataforma=plataforma,
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
+        raiz=raiz,
+        registro=Registro(),
+        metricas=Metricas(),
+        reloj=reloj,
+    ).arrancar()
+    assert ("estado", {"desde": "grabando", "hasta": "grabada", "motivo": "reinicio_supervisor"}) in _historial(repo, en_curso)
+
+
+def test_cada_vuelta_deja_el_latido(repo, tmp_path):
+    plataforma = PlataformaFalsa()
+    plataforma.respuesta_crear = (503, None)
+    reloj = Reloj()
+    sup = Supervisor(
+        repo=repo,
+        plataforma=plataforma,
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, socios, destino: GrabacionFalsa(socios, destino),
+        raiz=tmp_path,
+        registro=Registro(),
+        metricas=Metricas(),
+        reloj=reloj,
+        chromium=lambda: "HeadlessChrome/141.0.7390.37",
+        imagen="sha-0123456789abcdef0123456789abcdef01234567",
+    )
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    detalle, hace_s = repo.latido()
+    assert 0 <= hace_s < 5
+    assert detalle["chromium"] == "HeadlessChrome/141.0.7390.37"
+    assert detalle["imagen"] == "sha-0123456789abcdef0123456789abcdef01234567"
+    assert detalle["grabaciones_bytes"] == 4 and detalle["grabaciones_total"] > 0
+    assert detalle["con_audio"] == [rid]
+    assert detalle["transcribir_codigo"] == 503
+
+
+def test_sin_chromium_el_latido_lo_dice(repo, tmp_path):
+    def caido():
+        raise OSError("conexión rechazada")
+
+    sup = Supervisor(
+        repo=repo,
+        plataforma=PlataformaFalsa(),
+        sala_de=lambda r: None,
+        nueva_grabacion=lambda sala, s, d: GrabacionFalsa(s, d),
+        raiz=tmp_path,
+        registro=Registro(),
+        metricas=Metricas(),
+        chromium=caido,
+    )
+    sup.paso()
+    assert repo.latido()[0]["chromium"] is None
+
+
+def test_reintento_pedido_desde_el_panel_con_audio(entorno, repo_panel):
+    """@a57: sin terminal. Error con el audio aún en el tmpfs → «Reintentar» → `grabada` → se reenvía."""
+    sup, repo, plataforma, *_ = entorno
+    plataforma.respuesta_crear = (401, None)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "error"
+    plataforma.respuesta_crear = (201, {"id": TID})
+    assert repo_panel.pedir_reintento(rid, "pablo")
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["reintento_pedido_en"]) == ("transcribiendo", None)
+    assert len(plataforma.creaciones) == 2
+    assert ("reintento", {"usuario": "pablo", "resultado": "reenviada"}) in _historial(repo, rid)
+
+
+def test_reintento_pedido_sin_audio_no_mueve_la_reunion(entorno, repo_panel):
+    sup, repo, *_ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO, inicio=True)
+    repo.mover(rid, Estado.GRABANDO, Estado.GRABADA, motivo="pedida", fin=True)
+    sup.paso()  # error: pistas (ninguna)
+    assert repo_panel.pedir_reintento(rid, "pablo")
+    sup.paso()
+    r = repo.reunion(rid)
+    assert (r["estado"], r["motivo"], r["reintento_pedido_en"]) == ("error", "pistas", None)
+    assert _historial(repo, rid)[-1] == ("reintento", {"usuario": "pablo", "resultado": "ninguna_pista"})
+
+
+def test_un_reintento_que_falla_no_para_la_vuelta(entorno, repo_panel, monkeypatch):
+    """Revisión de V4: un fallo inesperado al atender un reintento descarta la petición; la vuelta sigue enviando y latiendo."""
+    sup, repo, plataforma, *_ = entorno
+    plataforma.respuesta_crear = (401, None)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    repo.pedir_parada()
+    sup.paso()
+    assert repo_panel.pedir_reintento(rid, "pablo")
+
+    def falla(_rid):
+        raise PermissionError("tmpfs")
+
+    monkeypatch.setattr(sup, "_nombres", falla)
+    otra = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()  # empieza a grabar la otra pese al reintento roto
+    r = repo.reunion(rid)
+    assert (r["estado"], r["reintento_pedido_en"]) == ("error", None)
+    assert _historial(repo, rid)[-1] == ("reintento", {"usuario": "pablo", "resultado": "interno"})
+    assert repo.reunion(otra)["estado"] == "grabando"
+    assert repo.latido() is not None

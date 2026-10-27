@@ -10,6 +10,7 @@ ACTAS_PUERTO_METRICAS      9101
 ACTAS_SALAS_CLAVE_FICHERO  fichero con la clave de las contraseñas de las salas, 32 bytes en base64 (Secret `actas-salas-clave`,
                            SOPS). Cada reunión se graba en su sala (V2 de KubernetesInfrastructure#298, @a46); `SALA`, `CLAVE` y
                            `SALT` (el `envFrom` `actas-sala` de antes) ya no se leen.
+ACTAS_REVISION             el commit de la imagen (lo pone el Dockerfile al construirla): va al latido como `sha-<commit>`
 """
 
 import os
@@ -20,7 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from actas.base import Repositorio
-from actas.cdp import Cdp, esperar_chromium
+from actas.cdp import Cdp, esperar_chromium, version_chromium
 from actas.enlaces import BASE
 from actas.grabador import SALA_RESCATE, Grabacion, Sala, sala_de_reunion
 from actas.metricas import Metricas, servir
@@ -109,10 +110,13 @@ def main() -> None:
     texto_maestra = Path(e["ACTAS_SALAS_CLAVE_FICHERO"]).read_text(encoding="utf-8")
     maestra = clave_maestra(texto_maestra)
     registro = registro_del_entorno(e, token, texto_maestra)
-    repo = Repositorio(e["ACTAS_DSN"])
+    # Los mismos secretos que redacta el registro, también las contraseñas de sala que añade al grabar: ningún evento los lleva
+    # (@a55). La lista se comparte, no se copia.
+    repo = Repositorio(e["ACTAS_DSN"], secretos=registro.secretos)
     metricas = Metricas()
     servir(metricas, int(e.get("ACTAS_PUERTO_METRICAS", "9101")))
     cdp_url = e.get("ACTAS_CDP", "http://127.0.0.1:9222")
+    revision = e.get("ACTAS_REVISION", "")
     sup = Supervisor(
         repo=repo,
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
@@ -121,6 +125,8 @@ def main() -> None:
         raiz=Path(e.get("ACTAS_GRABACIONES", "/grabaciones")),
         registro=registro,
         metricas=metricas,
+        chromium=lambda: version_chromium(cdp_url),
+        imagen=f"sha-{revision}" if revision else "",
     )
     fin = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: fin.set())
