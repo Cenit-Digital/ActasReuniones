@@ -306,3 +306,16 @@ def test_sin_origen_no_se_cambia_nada(cliente, repo, ruta):
 @pytest.mark.parametrize("accion", ["modificar", "cancelar", "eliminar", "recuperar"])
 def test_un_id_que_no_es_un_uuid_da_404(cliente, accion):
     assert cliente.post(f"/reuniones/x/{accion}", data={}, headers=MISMO_ORIGEN).status_code == 404
+
+
+# ── Con V5: lo de la papelera tampoco se comparte ────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("ruta", ["compartir", "compartir?que=transcripcion&socio=pablo", "transcripcion.txt"])
+def test_una_reunion_en_la_papelera_no_se_comparte(cliente, ruta):
+    r = cliente.get(f"/reuniones/{RID_PAPELERA}/{ruta}", headers=USUARIO)
+    assert r.status_code == 404 and "presupuesto del trimestre" not in r.text
+
+
+def test_la_ficha_de_una_reunion_en_la_papelera_no_ofrece_compartir(cliente):
+    assert f'href="/reuniones/{RID_PAPELERA}/compartir"' not in cliente.get(f"/reuniones/{RID_PAPELERA}", headers=USUARIO).text

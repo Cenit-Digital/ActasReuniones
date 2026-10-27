@@ -11,7 +11,7 @@
 </div>
 <div class="acciones">
 {% if transcribir %}<a class="boton" href="{{ transcribir }}" target="_blank" rel="noopener noreferrer">Abrir en transcribir<span aria-hidden="true"> ↗</span><span class="oculto"> (se abre en otra pestaña)</span></a>{% endif %}
-{% if segmentos or sala %}<a class="boton" href="/reuniones/{{ r.id }}/compartir">Compartir</a>{% endif %}
+{% if (segmentos or sala) and not papelera %}<a class="boton" href="/reuniones/{{ r.id }}/compartir">Compartir</a>{% endif %}
 {% if r.estado == "grabando" %}
 <form method="post" action="/parar"><button class="boton boton-peligro" type="submit">Parar</button></form>
 {% endif %}

@@ -441,6 +441,8 @@ def crear_app(
             r, _conformidades, segmentos = await en_hilo(repo.detalle, rid)
         except KeyError:
             raise HTTPException(404) from None
+        if r.get("papelera_en") is not None:  # V3: se ha pedido borrarla; nada suyo sale del panel mientras tanto
+            raise HTTPException(404)
         return r, segmentos
 
     async def ver_compartir(peticion: Request) -> Response:
