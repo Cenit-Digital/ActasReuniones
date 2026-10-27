@@ -713,6 +713,10 @@ legend {
 section > h2 {
   margin: 24px 0 12px;
 }
+.tabla-sin-cortes th,
+.tabla-sin-cortes td {
+  white-space: nowrap; /* en el móvil la tabla se desplaza en su caja; no parte nombres ni identificadores */
+}
 .formulario {
   display: flex;
   flex-direction: column;
