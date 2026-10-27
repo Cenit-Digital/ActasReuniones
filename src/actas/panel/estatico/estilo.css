@@ -865,6 +865,33 @@ section > h2 {
   margin-bottom: 12px;
   font-size: 30px;
 }
+/* ── Compartir y «Copiar diagnóstico para Claude» (V5, V6) ───────────────────────────────────────────────────────────── */
+.preparado {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+.preparado label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.preparado textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-interactive);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.6 'JetBrains Mono', ui-monospace, monospace;
+  resize: vertical;
+}
+.opcion .detalle {
+  flex-basis: 100%;
+  font-size: 13px;
+}
 
 /* ── Móvil (transcribir: $movil 760px) ───────────────────────────────────────────────────────────────────────────────── */
 @media (max-width: 760px) {

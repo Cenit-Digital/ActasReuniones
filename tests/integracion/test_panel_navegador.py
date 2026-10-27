@@ -20,6 +20,7 @@ from actas.registro import Registro
 
 SECRETO = "secreto-del-proxy"
 RID = RIDS["grabando"]
+COMPARTIR = f"/reuniones/{RIDS['transcrita']}/compartir"
 
 
 @pytest.fixture
@@ -127,6 +128,10 @@ PANTALLAS = {
     "sala": f"/salas/{SALA}",
     "sala-confirmar-clave": f"/salas/{SALA}/clave",
     "no-existe": "/no-existe",
+    # V5 nivel 1 (@a58): el formulario, los mensajes preparados y el 400 de una petición que no se ofrece.
+    "compartir": COMPARTIR,
+    "compartir-mensajes": f"{COMPARTIR}?que=transcripcion&que=enlace_sala&socio=pablo&socio=roberto",
+    "compartir-error": f"{COMPARTIR}?que=transcripcion",
 }
 WCAG_22_AA = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]
 AUDITAR = (
@@ -188,6 +193,10 @@ def test_axe_sin_infracciones_wcag22_aa_ni_scroll_horizontal(chromium, panel, ax
         assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('[role=alert]')"))
         infracciones, sin_scroll = _auditar(cdp, s, axe)
         assert infracciones == [] and sin_scroll, f"grabar con error ({ancho} px, {tema}): {infracciones}"
+        # Los botones «Copiar» de «Compartir» (@a58) y de «Copiar diagnóstico para Claude» (@a60) aparecen con copiar.js.
+        for ruta, boton in [(PANTALLAS["compartir-mensajes"], "mensaje-2"), (PANTALLAS["reunion-error"], "para-claude")]:
+            _ir(cdp, s, origen, ruta)
+            assert _esperar(lambda b=boton: cdp.evaluar(s, f"!document.querySelector('button[data-copiar={b}]').hidden"))
         # «Mostrar la contraseña» (V2): la sala con la contraseña visible y sus botones «Copiar».
         _ir(cdp, s, origen, f"/salas/{SALA}/clave")
         cdp.evaluar(s, "document.querySelector('form[method=post] button[type=submit]').click(); true")
