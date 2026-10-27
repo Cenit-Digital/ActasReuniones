@@ -70,13 +70,14 @@ def test_programar_guarda_la_reunion_y_una_conformidad_por_socio(repo_panel, rep
     )
     assert r["programada_para"] == p.para
     assert r["repetir_dia"] == p.para.astimezone(MADRID).day
+    assert r["repetir_hora"] == p.para.astimezone(MADRID).time().replace(tzinfo=None)
     assert (r["pedido_por"], r["inicio"], r["fin"]) == (USUARIO, None, None)
     assert repo.conformidades(rid) == [("pablo", "v1"), ("roberto", "v1")]
 
 
 def test_programar_sin_repetir_no_guarda_dia(repo_panel, repo):
     rid = repo_panel.programar(_prog(_sala(repo)), USUARIO)
-    assert repo.reunion(rid)["repetir_dia"] is None
+    assert (repo.reunion(rid)["repetir_dia"], repo.reunion(rid)["repetir_hora"]) == (None, None)
 
 
 def test_la_base_no_programa_en_el_pasado(repo_panel, repo):
@@ -186,6 +187,7 @@ def test_a49_modificar_una_programada(repo_panel, repo):
         30,
     )
     assert list(r["socios"]) == ["pablo"]
+    assert r["repetir_hora"] == nueva.para.astimezone(MADRID).time().replace(tzinfo=None)
     assert repo.conformidades(rid) == [("pablo", "v1")]
     assert [(e["tipo"], e["detalle"]) for e in repo.eventos(rid)] == [("modificada", {"usuario": USUARIO})]
 
@@ -226,6 +228,7 @@ def test_a49_modificar_una_que_ya_graba_se_rechaza(repo_panel, repo):
         "titulo = 'otro'",
         "repetir = 'semanal'",
         "espera_min = 60",
+        "repetir_hora = '09:00'",
         "texto_version = 'v2'",
     ],
 )
@@ -511,6 +514,7 @@ def test_la_siguiente_de_una_serie_nace_sin_conformidades_y_una_sola_vez(repo_ap
         "Socios · seguimiento",
     )
     assert repo.conformidades(sig) == []
+    assert s["repetir_hora"] == repo.reunion(rid)["repetir_hora"] is not None
     assert repo_app.series_pendientes() == []
 
 

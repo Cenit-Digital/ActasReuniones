@@ -3,8 +3,11 @@
 --
 -- Numerada 0006, no 0004 (el número que reservaba el plan): amplía los tipos de `eventos`, que crea la 0005, y en una base nueva
 -- una 0004 correría antes que ella (base.migrar aplica por nombre, en orden, las que faltan). Lo decidió Pablo el 2026-10-27 en
--- #298; el hueco 0004 queda sin usar. Solo añade columnas, objetos y privilegios, y amplía dos CHECK: la imagen anterior sigue
--- funcionando con ella (ADR 0023, «Vuelta atrás»).
+-- #298; el hueco 0004 queda sin usar. Añade columnas, objetos y privilegios y amplía dos CHECK; además reemplaza
+-- `comprobar_conformidades`, `conformidad_con_su_reunion` y `pedir_reintento`, añade triggers que restringen y quita
+-- privilegios (UPDATE de `conformidades` a actas_app; DELETE y TRUNCATE a los roles de aplicación). La imagen anterior sigue
+-- funcionando con ella (ADR 0023, «Vuelta atrás»): nunca actualiza conformidades, ni borra, ni cambia `creado_en`, ni devuelve
+-- una reunión a `pedida` (revisado en la revisión de V3 sobre supervisor.py, base.py y cli.py de c62811d).
 --
 -- La puerta @a33 (`actas-gate.sh f2`) exige que actas_panel no tenga más UPDATE que el de la parada ni ningún DELETE: el panel
 -- programa, modifica, cancela, manda a la papelera y recupera solo por las funciones SECURITY DEFINER de abajo, propiedad de
@@ -15,7 +18,8 @@
 
 -- 1. Lo programado de cada reunión. `tope_min`: el de «Parar como mucho a las», nunca más de las 3 h de F1 (@a7). `espera_min`:
 -- cuánto se espera a empezar y a que entre algún socio. `repetir_dia`: el día del mes de una serie mensual, para no correrse
--- (31 → 28 de febrero → 31 de marzo). `anterior_id`: la reunión de la serie de la que nace (@a53), y `repetida_en`, cuándo se
+-- (31 → 28 de febrero → 31 de marzo), y `repetir_hora`, la hora de Madrid de la serie (una que cae en el salto de marzo va a la
+-- hora siguiente y la siguiente vuelve a la suya). `anterior_id`: la reunión de la serie de la que nace (@a53), y `repetida_en`, cuándo se
 -- creó su siguiente (si la siguiente se borra, no se vuelve a crear). `papelera_*`: «Eliminar» (ADR 0023, decisión 6).
 ALTER TABLE reuniones
     ADD COLUMN titulo          text CHECK (char_length(titulo) BETWEEN 1 AND 120 AND titulo !~ '[[:cntrl:]]'),
@@ -23,6 +27,7 @@ ALTER TABLE reuniones
     ADD COLUMN tope_min        integer NOT NULL DEFAULT 180 CHECK (tope_min BETWEEN 1 AND 180),
     ADD COLUMN repetir         text NOT NULL DEFAULT 'no' CHECK (repetir IN ('no', 'semanal', 'mensual')),
     ADD COLUMN repetir_dia     integer CHECK (repetir_dia BETWEEN 1 AND 31),
+    ADD COLUMN repetir_hora    time,
     ADD COLUMN espera_min      integer CHECK (espera_min BETWEEN 1 AND 120),
     ADD COLUMN anterior_id     uuid REFERENCES reuniones (id) ON DELETE SET NULL,
     ADD COLUMN repetida_en     timestamptz,
@@ -105,11 +110,11 @@ CREATE FUNCTION programacion_congelada() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
 BEGIN
     IF OLD.estado <> 'programada'
-       AND (NEW.titulo, NEW.sala_id, NEW.programada_para, NEW.tope_min, NEW.repetir, NEW.repetir_dia, NEW.espera_min,
-            NEW.socios, NEW.texto_version)
+       AND (NEW.titulo, NEW.sala_id, NEW.programada_para, NEW.tope_min, NEW.repetir, NEW.repetir_dia, NEW.repetir_hora,
+            NEW.espera_min, NEW.socios, NEW.texto_version)
            IS DISTINCT FROM
-           (OLD.titulo, OLD.sala_id, OLD.programada_para, OLD.tope_min, OLD.repetir, OLD.repetir_dia, OLD.espera_min,
-            OLD.socios, OLD.texto_version) THEN
+           (OLD.titulo, OLD.sala_id, OLD.programada_para, OLD.tope_min, OLD.repetir, OLD.repetir_dia, OLD.repetir_hora,
+            OLD.espera_min, OLD.socios, OLD.texto_version) THEN
         RAISE EXCEPTION 'solo se modifica una reunión programada' USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -177,10 +182,11 @@ BEGIN
     IF p_para IS NULL OR p_para <= now() OR p_sala IS NULL THEN
         RAISE EXCEPTION 'programar: sin sala o en el pasado' USING ERRCODE = 'check_violation';
     END IF;
-    INSERT INTO reuniones (estado, titulo, sala_id, programada_para, tope_min, repetir, repetir_dia, espera_min, socios,
-                           texto_version, pedido_por)
+    INSERT INTO reuniones (estado, titulo, sala_id, programada_para, tope_min, repetir, repetir_dia, repetir_hora, espera_min,
+                           socios, texto_version, pedido_por)
     VALUES ('programada', p_titulo, p_sala, p_para, p_tope, p_repetir,
             CASE WHEN p_repetir = 'mensual' THEN extract(day FROM p_para AT TIME ZONE 'Europe/Madrid')::integer END,
+            CASE WHEN p_repetir <> 'no' THEN (p_para AT TIME ZONE 'Europe/Madrid')::time END,
             p_espera, p_socios, p_version, p_usuario)
     RETURNING id INTO rid;
     INSERT INTO conformidades (reunion_id, socio, texto_version) SELECT rid, s, p_version FROM unnest(p_socios) AS s;
@@ -200,6 +206,7 @@ BEGIN
     UPDATE reuniones
     SET titulo = p_titulo, sala_id = p_sala, programada_para = p_para, tope_min = p_tope, repetir = p_repetir,
         repetir_dia = CASE WHEN p_repetir = 'mensual' THEN extract(day FROM p_para AT TIME ZONE 'Europe/Madrid')::integer END,
+        repetir_hora = CASE WHEN p_repetir <> 'no' THEN (p_para AT TIME ZONE 'Europe/Madrid')::time END,
         espera_min = p_espera, socios = p_socios, texto_version = p_version, actualizado_en = now()
     WHERE id = p_id AND estado = 'programada';
     IF NOT FOUND THEN

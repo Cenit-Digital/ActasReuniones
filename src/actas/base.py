@@ -578,10 +578,10 @@ class Repositorio:
         (se piden de nuevo). Una sola vez: None si ya se creó."""
         with self.conexion() as c:
             fila = c.execute(
-                """INSERT INTO reuniones (estado, titulo, sala_id, programada_para, tope_min, repetir, repetir_dia, espera_min,
-                                          socios, texto_version, pedido_por, anterior_id)
-                   SELECT 'programada', titulo, sala_id, %s, tope_min, repetir, repetir_dia, espera_min, socios, texto_version,
-                          pedido_por, id
+                """INSERT INTO reuniones (estado, titulo, sala_id, programada_para, tope_min, repetir, repetir_dia, repetir_hora,
+                                          espera_min, socios, texto_version, pedido_por, anterior_id)
+                   SELECT 'programada', titulo, sala_id, %s, tope_min, repetir, repetir_dia, repetir_hora, espera_min, socios,
+                          texto_version, pedido_por, id
                    FROM reuniones WHERE id = %s AND repetir <> 'no' AND repetida_en IS NULL
                    ON CONFLICT (anterior_id) DO NOTHING
                    RETURNING id::text""",

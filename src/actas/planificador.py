@@ -119,15 +119,17 @@ def _dia_del_mes(anio: int, mes: int, dia: int) -> date:
     return date(anio, mes, min(dia, calendar.monthrange(anio, mes)[1]))
 
 
-def siguiente(para: datetime, repetir: str, dia: int | None, ahora: datetime) -> datetime | None:
+def siguiente(para: datetime, repetir: str, dia: int | None, ahora: datetime, hora: time | None = None) -> datetime | None:
     """La primera fecha de la serie posterior a `para` que aún no ha llegado (si el supervisor estuvo parado, se saltan las que
-    pasaron). `dia`: el día original de una serie mensual. None si no se repite."""
+    pasaron). `dia`: el día original de una serie mensual; `hora`: la hora de Madrid original de la serie
+    (`reuniones.repetir_hora`). Una que cae en el salto de marzo va a la hora siguiente (fold=0), y con la hora original la
+    siguiente vuelve a la suya en vez de quedarse corrida. None si no se repite."""
     if repetir == "no":
         return None
     if repetir not in REPETIR:
         raise ValueError("repetición desconocida")
     local = para.astimezone(MADRID)
-    hora: time = local.time()
+    hora = hora or local.time()
     fecha = local.date()
     dia = dia or fecha.day
     while True:

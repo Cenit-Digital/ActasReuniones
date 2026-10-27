@@ -1,7 +1,7 @@
 """El planificador de V3 (KubernetesInfrastructure#298, ADR 0023 decisión 5): el formulario de programar, cuándo empieza una
 reunión `programada` (@a48) y la fecha de la siguiente de una serie (@a53). Las horas, las de Madrid, con sus cambios de hora."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
 
@@ -296,3 +296,26 @@ def test_salta_meses_ya_pasados():
 def test_repetir_desconocido_se_rechaza():
     with pytest.raises(ValueError):
         siguiente(_madrid(2026, 10, 29, 17, 30), "diaria", None, AHORA)
+
+
+def test_una_de_la_serie_en_el_salto_de_marzo_pasa_a_la_hora_siguiente():
+    # 2027-03-28: las 02:30 no existen en Madrid; ese día va a las 03:30 (PEP 495, fold=0).
+    para = _madrid(2027, 3, 21, 2, 30)
+    sig = siguiente(para, "semanal", None, datetime(2027, 3, 21, 2, 0, tzinfo=UTC), hora=time(2, 30))
+    assert sig == datetime(2027, 3, 28, 1, 30, tzinfo=UTC)
+    assert sig.astimezone(MADRID).strftime("%H:%M") == "03:30"
+
+
+def test_tras_el_salto_de_marzo_la_serie_vuelve_a_su_hora():
+    """Revisión de V3: sin la hora original, la serie se quedaba a las 03:30 para siempre."""
+    para = datetime(2027, 3, 28, 1, 30, tzinfo=UTC)  # la del salto, a las 03:30
+    sig = siguiente(para, "semanal", None, para, hora=time(2, 30))
+    assert sig == _madrid(2027, 4, 4, 2, 30)
+
+
+def test_sin_hora_original_usa_la_de_la_reunion():
+    assert siguiente(_madrid(2026, 11, 5, 17, 30), "semanal", None, AHORA, hora=None) == _madrid(2026, 11, 12, 17, 30)
+
+
+def test_la_hora_original_manda_sobre_la_de_la_reunion():
+    assert siguiente(_madrid(2026, 11, 5, 18, 0), "semanal", None, AHORA, hora=time(17, 30)) == _madrid(2026, 11, 12, 17, 30)

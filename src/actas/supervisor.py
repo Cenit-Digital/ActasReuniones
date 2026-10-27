@@ -77,7 +77,9 @@ class _Activa:
     completas: bool = True  # si todas las descargas terminaron al parar
     faltan: int = 0  # socios conformes que no publican, en el último aviso anotado
     tope_s: int = TOPE_GRABACION_S  # el de la reunión (V3)
-    espera_s: int | None = None  # la de una programada: si en ella no publica ningún socio conforme, se cancela
+    # La de una programada: si en ella no publica ningún socio conforme, se cancela. Se cuenta desde que empieza a grabar, no
+    # desde su hora: si empezó tarde (otra grabación en marcha), los socios tienen su espera entera para entrar.
+    espera_s: int | None = None
     alguno_visto: bool = False  # algún socio conforme publicó en la sala en alguna vigilancia
 
 
@@ -222,6 +224,7 @@ class Supervisor:
             self.log("no se graba:", str(e))
             self._error(r["id"], desde, "sala", igual=igual)
             return
+        # Construirlo no reserva nada (la conexión con Chromium se abre en `empezar`): si no pasa a grabando, se descarta.
         grabador = self.nueva_grabacion(sala, peticion.socios, self.raiz / r["id"])
         try:
             self.repo.mover(r["id"], desde, Estado.GRABANDO, inicio=True, detalle={"socios": len(peticion.socios)}, igual=igual)
@@ -313,7 +316,7 @@ class Supervisor:
         ahora = datetime.fromtimestamp(self.reloj(), UTC)
         for r in self.repo.series_pendientes():
             try:
-                para = siguiente(r["programada_para"], r["repetir"], r["repetir_dia"], ahora)
+                para = siguiente(r["programada_para"], r["repetir"], r["repetir_dia"], ahora, r.get("repetir_hora"))
                 if para is not None and self.repo.crear_siguiente(r, para):
                     self.log("programada la siguiente reunión de una serie")
             except psycopg.OperationalError:

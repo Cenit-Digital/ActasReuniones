@@ -885,7 +885,11 @@ def _programada(repo, **cambios):
 def _vence(repo, rid, hace="1 second"):
     """Su hora llega: la base decide (now()), no el reloj del supervisor."""
     with repo.conexion() as c:
-        c.execute("UPDATE reuniones SET programada_para = now() - %s::interval WHERE id = %s", (hace, rid))
+        c.execute(
+            "UPDATE reuniones SET programada_para = now() - %s::interval, repetir_hora = CASE WHEN repetir <> 'no' "
+            "THEN ((now() - %s::interval) AT TIME ZONE 'Europe/Madrid')::time END WHERE id = %s",
+            (hace, hace, rid),
+        )
 
 
 def test_a48_a_su_hora_pasa_a_grabando_en_la_siguiente_vuelta(entorno):
@@ -1163,3 +1167,19 @@ def test_reintentar_por_actas_sh_una_que_nunca_grabo_no_revienta(repo):
     repo.mover(rid, Estado.PROGRAMADA, Estado.ERROR, motivo="conformidad")
     assert repo.reintentar(rid) is False
     assert repo.reunion(rid)["estado"] == "error"
+
+
+def test_a53_la_siguiente_usa_la_hora_original_de_la_serie(entorno):
+    """Revisión de V3: tras una que cayó en el salto de marzo, la serie vuelve a su hora."""
+    from datetime import time
+
+    from actas.planificador import MADRID
+
+    sup, repo, *_ = entorno
+    rid = _programada(repo, repetir="semanal")
+    _vence(repo, rid)
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET repetir_hora = '06:15' WHERE id = %s", (rid,))
+    sup.paso()
+    (sig,) = repo.programadas()
+    assert sig["programada_para"].astimezone(MADRID).time() == time(6, 15)
