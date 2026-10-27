@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
-from panel_falso import MAESTRA, RID_PISTAS, RIDS, SALA, RepoFalso
+from panel_falso import MAESTRA, RID_PAPELERA, RID_PISTAS, RIDS, SALA, RepoFalso
 
 from actas.cdp import Cdp
 from actas.panel import crear_app
@@ -127,6 +127,14 @@ PANTALLAS = {
     "sala-nueva": "/salas/nueva",
     "sala": f"/salas/{SALA}",
     "sala-confirmar-clave": f"/salas/{SALA}/clave",
+    # V3: programación, modificar, cancelar, eliminar y papelera.
+    "programacion": "/programacion",
+    "reunion-programada": f"/reuniones/{RIDS['programada']}",
+    "modificar": f"/reuniones/{RIDS['programada']}/modificar",
+    "cancelar": f"/reuniones/{RIDS['programada']}/cancelar",
+    "eliminar": f"/reuniones/{RIDS['transcrita']}/eliminar",
+    "papelera": "/papelera",
+    "reunion-en-papelera": f"/reuniones/{RID_PAPELERA}",
     "no-existe": "/no-existe",
     # V5 nivel 1 (@a58): el formulario, los mensajes preparados y el 400 de una petición que no se ofrece.
     "compartir": COMPARTIR,

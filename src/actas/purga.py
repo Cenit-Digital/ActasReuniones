@@ -1,5 +1,5 @@
 """Qué audio se borra del tmpfs (@a10; plazos del ADR 0015, decisión 5): el de una reunión ya transcrita, cualquiera de más
-de 7 días y el que no es de ninguna reunión conocida."""
+de 7 días, el que no es de ninguna reunión conocida y, desde V3, el de una reunión cancelada porque no entró nadie."""
 
 from dataclasses import dataclass
 
@@ -21,6 +21,8 @@ def a_borrar(audios: list[Audio], ahora_s: float) -> list[tuple[str, str]]:
             borrar.append((a.reunion, "huerfano"))
         elif a.estado == "transcrita":
             borrar.append((a.reunion, "transcrita"))
+        elif a.estado == "cancelada":
+            borrar.append((a.reunion, "nadie_entro"))
         elif ahora_s - a.mtime_s >= PLAZO_AUDIO_S:
             borrar.append((a.reunion, "plazo_7d"))
     return borrar

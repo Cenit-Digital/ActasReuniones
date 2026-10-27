@@ -1,22 +1,37 @@
 {% extends "base.html" %}
 {% from "_glifos.html" import glifo, chip %}
 {% set seccion = "reuniones" %}
-{% block titulo %}Reunión del {{ fecha }}{% endblock %}
+{% block titulo %}{{ nombre }}{% endblock %}
 {% block contenido %}
-<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> Reunión del {{ fecha }}</nav>
+<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> {{ nombre }}</nav>
 <div class="titular">
 <div>
-<h1>Reunión del {{ fecha }}</h1>
+<h1>{{ nombre }}</h1>
 <p class="linea-datos">{{ chip(r.estado) }}<span class="mono">{{ duracion }}</span><span>{{ socios }}</span></p>
 </div>
 <div class="acciones">
 {% if transcribir %}<a class="boton" href="{{ transcribir }}" target="_blank" rel="noopener noreferrer">Abrir en transcribir<span aria-hidden="true"> ↗</span><span class="oculto"> (se abre en otra pestaña)</span></a>{% endif %}
-{% if segmentos or sala %}<a class="boton" href="/reuniones/{{ r.id }}/compartir">Compartir</a>{% endif %}
+{% if (segmentos or sala) and not papelera %}<a class="boton" href="/reuniones/{{ r.id }}/compartir">Compartir</a>{% endif %}
 {% if r.estado == "grabando" %}
 <form method="post" action="/parar"><button class="boton boton-peligro" type="submit">Parar</button></form>
 {% endif %}
+{% if r.estado == "programada" %}
+<a class="boton" href="/reuniones/{{ r.id }}/modificar">Modificar</a>
+<a class="boton boton-peligro" href="/reuniones/{{ r.id }}/cancelar">Cancelar</a>
+{% endif %}
+{% if eliminable %}<a class="boton boton-peligro" href="/reuniones/{{ r.id }}/eliminar">Eliminar</a>{% endif %}
 </div>
 </div>
+{% if papelera %}
+<section class="aviso" aria-labelledby="t-papelera">
+{{ glifo("prohibido") }}
+<div>
+<h2 id="t-papelera">En la papelera</h2>
+<p>La eliminó {{ r.papelera_por }}. Se borra de verdad a los 7 días; hasta entonces se puede recuperar. Su transcripción no se muestra.</p>
+</div>
+<form method="post" action="/reuniones/{{ r.id }}/recuperar"><button class="boton boton-primario" type="submit">Recuperar</button></form>
+</section>
+{% endif %}
 {% if diagnostico %}
 <section class="aviso aviso-error diagnostico" id="diagnostico" aria-labelledby="t-diagnostico">
 {{ glifo("cruz") }}
@@ -42,6 +57,8 @@
 <li><time class="mono">{{ tiempo }}</time><div><span class="hablante h{{ color }}">{{ hablante }}</span><p>{{ texto }}</p></div></li>
 {% endfor %}
 </ol>
+{% elif papelera %}
+<p class="vacio">En la papelera: la transcripción no se muestra.</p>
 {% else %}
 <p class="vacio">Aún no hay transcripción.</p>
 {% endif %}
@@ -76,7 +93,12 @@
 <dt>Duración</dt><dd class="mono">{{ duracion }}</dd>
 <dt>Socios</dt><dd>{{ socios }}</dd>
 <dt>Sala</dt><dd>{% if sala %}<a href="/salas/{{ sala.id }}">{{ sala.nombre }}</a>{% else %}<span class="detalle">sin sala</span>{% endif %}</dd>
-<dt>Pedida por</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
+{% if programada %}
+<dt>Programada para</dt><dd class="mono">{{ programada }}</dd>
+<dt>Repetir</dt><dd>{{ repetir }}</dd>
+{% endif %}
+<dt>Tope</dt><dd>{{ (r.tope_min or 180) // 60 }} h{% if (r.tope_min or 180) % 60 %} {{ (r.tope_min or 180) % 60 }} min{% endif %}</dd>
+<dt>{% if programada %}Programada por{% else %}Pedida por{% endif %}</dt><dd>{{ r.pedido_por or "actas.sh" }}</dd>
 </dl>
 </section>
 <section class="tarjeta" aria-labelledby="t-conformidades">

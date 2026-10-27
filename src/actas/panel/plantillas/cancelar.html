@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% set seccion = "programacion" %}
+{% block titulo %}Cancelar {{ nombre }}{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/programacion">Programación</a> <span aria-hidden="true">/</span> <a href="/reuniones/{{ rid }}">{{ nombre }}</a> <span aria-hidden="true">/</span> Cancelar</nav>
+<form method="post" action="/reuniones/{{ rid }}/cancelar" class="tarjeta formulario">
+<h1>¿Cancelar «{{ nombre }}»?</h1>
+<p>Estaba programada para el {{ cuando }} (Madrid). No se graba y no se borra nada: queda en la lista como cancelada.</p>
+{% if repite %}<p>Se repite {{ repite }}. Puedes cancelar solo esta (la siguiente se programa igual) o también las siguientes.</p>{% endif %}
+<div class="acciones">
+<button class="boton boton-peligro" type="submit" name="serie" value="0">{% if repite %}Cancelar solo esta{% else %}Cancelar la grabación{% endif %}</button>
+{% if repite %}<button class="boton boton-peligro" type="submit" name="serie" value="1">Cancelar esta y las siguientes</button>{% endif %}
+<a class="boton" href="/reuniones/{{ rid }}">Volver</a>
+</div>
+</form>
+{% endblock %}

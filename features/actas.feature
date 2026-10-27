@@ -182,3 +182,45 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Entonces copia un bloque con el motivo, el diagnóstico, los eventos, las comprobaciones y las versiones
     Y los socios van como S1-S3 y los usuarios del panel como U1…
     Y no lleva contraseñas, hash, enlaces, la sala ni texto de los segmentos
+
+  Escenario: @a48 una reunión programada empieza a su hora
+    Dado una reunión «programada» para T con la conformidad de todos sus socios
+    Cuando el reloj de la base llega a T
+    Entonces el supervisor la pasa a «grabando» en su siguiente vuelta (cada 5 s)
+    Y si falta la conformidad de algún socio, la pasa a «error» con el motivo conformidad
+    Y si pasada su espera no pudo empezar, la pasa a «error» con el motivo no_empezo
+
+  Escenario: si no entra nadie, se cancela
+    Dado una reunión programada que ya graba con una espera de N minutos
+    Cuando en esos N minutos no publica ningún socio conforme
+    Entonces el supervisor la para, borra su audio y la deja «cancelada» con el motivo nadie_entro
+
+  Escenario: @a49 modificar solo mientras está programada
+    Dado una reunión «programada»
+    Cuando Pablo cambia la fecha, la sala, el tope o los socios
+    Entonces se guarda por la función modificar_programada y queda en el historial
+    Y en una reunión que ya graba, la base lo rechaza (trigger), también al supervisor
+
+  Escenario: @a50 cancelar sin borrar filas
+    Dado una reunión «programada»
+    Cuando Pablo confirma «Cancelar»
+    Entonces pasa a «cancelada» sin borrar ninguna fila
+    Y «esta y las siguientes» deja de repetirla
+
+  Escenario: @a51 eliminar a la papelera y borrar a los 7 días
+    Dado una reunión terminada
+    Cuando Pablo escribe su título y confirma «Eliminar»
+    Entonces va a la papelera, desde donde se puede recuperar
+    Y a los 7 días la purga diaria la borra con borrar_reunion, con sus dependientes, y deja una fila en purgas sin contenido
+    Y ni actas_panel ni actas_app tienen DELETE directo en ninguna tabla
+
+  Escenario: @a52 purga de 12 meses
+    Dado una transcripción de hace más de 12 meses
+    Cuando pasa la purga diaria
+    Entonces se borra y queda una fila en purgas con el motivo plazo_12m
+
+  Escenario: @a53 la siguiente de una serie
+    Dado una reunión con repetir semanal o mensual
+    Cuando sale de «programada» (empieza, no puede empezar o se cancela solo ella)
+    Entonces el supervisor crea la siguiente «programada» con la misma sala, tope, espera y socios, y sin conformidades
+    Y la mensual va el mismo día o, si el mes no lo tiene, el último

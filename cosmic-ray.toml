@@ -1,6 +1,6 @@
 # Prueba de mutación (Cosmic Ray 8.7): los módulos de lógica pura que fijan los planes de F1 (KubernetesInfrastructure#223) y de
-# F2 (KubernetesInfrastructure#287: origen, formulario, busqueda y presentacion) y de V2 (KubernetesInfrastructure#298: salas y
-# enlaces).
+# F2 (KubernetesInfrastructure#287: origen, formulario, busqueda y presentacion), de V2 (KubernetesInfrastructure#298: salas y
+# enlaces) y de V3 (#298: estados, ya en la lista, y planificador).
 # `bin/harness mutate` → init (con --force) + exec + `cr-rate --fail-over 20` (≥ 80 % de mutantes muertos).
 # Los adaptadores (CDP, PostgreSQL, HTTP, el bucle del supervisor y las rutas del panel) tienen tests de integración y no se mutan.
 [cosmic-ray]
@@ -19,10 +19,11 @@ module-path = [
     "src/actas/presentacion.py",
     "src/actas/salas.py",
     "src/actas/enlaces.py",
+    "src/actas/planificador.py",
 ]
 timeout = 30.0
 excluded-modules = []
-test-command = "python -m pytest -x -q -p no:cacheprovider tests/unit/test_pistas.py tests/unit/test_conformidad.py tests/unit/test_estados.py tests/unit/test_purga.py tests/unit/test_sondeo.py tests/unit/test_registro.py tests/unit/test_aviso.py tests/unit/test_transcripcion.py tests/unit/test_origen.py tests/unit/test_formulario.py tests/unit/test_busqueda.py tests/unit/test_presentacion.py tests/unit/test_salas.py tests/unit/test_enlaces.py"
+test-command = "python -m pytest -x -q -p no:cacheprovider tests/unit/test_pistas.py tests/unit/test_conformidad.py tests/unit/test_estados.py tests/unit/test_purga.py tests/unit/test_sondeo.py tests/unit/test_registro.py tests/unit/test_aviso.py tests/unit/test_transcripcion.py tests/unit/test_origen.py tests/unit/test_formulario.py tests/unit/test_busqueda.py tests/unit/test_presentacion.py tests/unit/test_salas.py tests/unit/test_enlaces.py tests/unit/test_planificador.py"
 
 [cosmic-ray.distributor]
 name = "local"

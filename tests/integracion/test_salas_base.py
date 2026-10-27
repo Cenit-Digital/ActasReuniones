@@ -268,6 +268,18 @@ def test_las_funciones_security_definer_con_search_path_fijo_y_pg_temp_al_final(
             "SELECT p.proname, p.proconfig FROM pg_proc p WHERE p.pronamespace = %s::regnamespace AND p.prosecdef ORDER BY 1",
             (esquema,),
         ).fetchall()
-    assert [f[0] for f in filas] == ["anotar_sala_creada", "pedir_reintento", "socio_activo", "ver_clave_sala"]  # V4: la 0005
+    assert [f[0] for f in filas] == [
+        "a_papelera",  # V3: la 0006
+        "anotar_sala_creada",
+        "borrar_reunion",
+        "cancelar_reunion",
+        "modificar_programada",
+        "pedir_reintento",  # V4: la 0005
+        "programar",
+        "purgar_actas",
+        "recuperar",
+        "socio_activo",
+        "ver_clave_sala",
+    ]
     for _, config in filas:
         assert config == [f"search_path={esquema}, pg_temp"]

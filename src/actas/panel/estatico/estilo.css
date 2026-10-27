@@ -327,7 +327,9 @@ mark {
 }
 input[type='search'],
 input[type='text'],
-input[type='email'] {
+input[type='email'],
+input[type='datetime-local'],
+select {
   min-height: 44px;
   min-width: 0;
   padding: 0 14px;
@@ -925,4 +927,15 @@ section > h2 {
   .segmentos li {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Programación y papelera (V3) ────────────────────────────────────────────────────────────────────────────────────── */
+legend.etiqueta {
+  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+select {
+  padding-right: 8px;
 }

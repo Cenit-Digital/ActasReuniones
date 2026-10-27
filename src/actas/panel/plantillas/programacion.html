@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "_glifos.html" import glifo %}
+{% set seccion = "programacion" %}
+{% block titulo %}Programación{% endblock %}
+{% block contenido %}
+<div class="titular">
+<div>
+<h1>Programación</h1>
+<p class="entradilla">El supervisor empieza cada grabación a su hora si todos sus socios tienen su conformidad.</p>
+</div>
+<div class="acciones"><a class="boton boton-primario" href="/grabar">Programar otra</a></div>
+</div>
+{% if programadas %}
+<div class="tabla" role="region" aria-label="Reuniones programadas" tabindex="0">
+<table>
+<thead><tr><th scope="col">Reunión</th><th scope="col">Cuándo (Madrid)</th><th scope="col">Sala</th><th scope="col">Conformidades</th><th scope="col">Repetir</th><th scope="col"><span class="oculto">Acciones</span></th></tr></thead>
+<tbody>
+{% for p in programadas %}
+<tr>
+<td><a href="/reuniones/{{ p.id }}">{{ p.nombre }}</a></td>
+<td class="mono">{{ p.cuando }}</td>
+<td>{{ p.sala }}</td>
+<td>{% if p.conformes == p.total %}{{ glifo("visto") }}{% else %}{{ glifo("medio") }}{% endif %}{{ p.conformes }} de {{ p.total }} conformes</td>
+<td>{{ p.repetir }}</td>
+<td><span class="en-linea"><a class="boton" href="/reuniones/{{ p.id }}/modificar">Modificar<span class="oculto"> {{ p.nombre }}</span></a><a class="boton boton-peligro" href="/reuniones/{{ p.id }}/cancelar">Cancelar<span class="oculto"> {{ p.nombre }}</span></a></span></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="vacio tarjeta">No hay ninguna reunión programada. <a href="/grabar">Programa una</a>.</p>
+{% endif %}
+<p class="detalle">Lo eliminado va a la <a href="/papelera">papelera</a>, de donde se puede recuperar durante 7 días.</p>
+{% endblock %}

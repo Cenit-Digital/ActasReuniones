@@ -1,0 +1,66 @@
+{#- Los campos de «Grabar» y de «Modificar» (V3 de KubernetesInfrastructure#298): la sala, los socios conformes y el cuándo y
+    cómo. `v`: los valores del formulario (los de la reunión al modificar). Sin JavaScript: «Grabar ahora» ignora la fecha, la
+    repetición y la espera. -#}
+{% macro sala(salas, elegida) -%}
+<fieldset>
+<legend>1 · Sala</legend>
+{% if salas %}
+<div class="opciones">
+{% for s in salas %}
+<label class="opcion"><input type="radio" name="sala" value="{{ s.id }}" required{% if s.id == elegida or (not elegida and salas | length == 1) %} checked{% endif %}> {{ s.nombre }} <span class="detalle">{% if s.ultima %}usada el {{ s.ultima.strftime("%Y-%m-%d") }} · {{ s.reuniones }} reuniones{% else %}sin usar{% endif %}</span></label>
+{% endfor %}
+</div>
+<p class="detalle">Los enlaces de los socios y la contraseña, en <a href="/salas">Salas y socios</a>. <a href="/salas/nueva">Crear sala nueva</a>.</p>
+{% else %}
+<p class="vacio">Aún no hay salas. <a href="/salas/nueva">Crea una</a> y envía a los socios sus enlaces antes de grabar.</p>
+{% endif %}
+</fieldset>
+{%- endmacro %}
+
+{% macro socios(socios, marcados) -%}
+<fieldset>
+<legend>2 · Socios conformes en esta reunión</legend>
+{% if socios %}
+<div class="opciones">
+{% for sid, nombre in socios %}
+<label class="opcion"><input type="checkbox" name="socio" value="{{ sid }}"{% if sid in marcados %} checked{% endif %}> {{ nombre }} <span class="detalle mono">({{ sid }})</span></label>
+{% endfor %}
+</div>
+<p class="detalle">Si una reunión programada empieza sin la conformidad de alguno de sus socios, no se graba.</p>
+{% else %}
+<p class="vacio">No hay socios activos. <a href="/salas#socios">Da de alta a los socios</a>.</p>
+{% endif %}
+</fieldset>
+{%- endmacro %}
+
+{% macro cuando(v, topes, esperas, con_ahora) -%}
+<fieldset>
+<legend>3 · Cuándo y cómo</legend>
+<div class="campos">
+<div class="campo"><label for="titulo">Título (opcional)</label><input id="titulo" name="titulo" type="text" maxlength="120" autocomplete="off" value="{{ v.titulo }}" placeholder="Socios · seguimiento semanal"></div>
+{% if con_ahora %}
+<fieldset class="campo">
+<legend class="etiqueta">Empezar</legend>
+<div class="en-linea">
+<label class="opcion"><input type="radio" name="cuando" value="ahora"{% if v.cuando != "programar" %} checked{% endif %}> Ahora</label>
+<label class="opcion"><input type="radio" name="cuando" value="programar"{% if v.cuando == "programar" %} checked{% endif %}> Programar</label>
+</div>
+</fieldset>
+{% else %}
+<input type="hidden" name="cuando" value="programar">
+{% endif %}
+<div class="campo"><label for="fecha">Fecha y hora (Madrid){% if con_ahora %}, si se programa{% endif %}</label><input id="fecha" name="fecha" type="datetime-local" value="{{ v.fecha }}"{% if not con_ahora %} required{% endif %}></div>
+<div class="campo"><label for="tope">Parar como mucho a las</label><select id="tope" name="tope">
+{% for t in topes %}<option value="{{ t }}"{% if v.tope == t | string %} selected{% endif %}>{{ t // 60 }} h{% if t == 180 %} (máximo){% endif %}</option>
+{% endfor %}</select></div>
+<div class="campo"><label for="repetir">Repetir{% if con_ahora %}, si se programa{% endif %}</label><select id="repetir" name="repetir">
+{% for valor, texto in [("no", "No repetir"), ("semanal", "Cada semana"), ("mensual", "Cada mes (si el mes no tiene ese día, el último)")] %}<option value="{{ valor }}"{% if v.repetir == valor %} selected{% endif %}>{{ texto }}</option>
+{% endfor %}</select></div>
+<div class="campo"><label for="espera">Si no entra nadie{% if con_ahora %}, si se programa{% endif %}</label><select id="espera" name="espera">
+{% for e in esperas %}<option value="{{ e }}"{% if v.espera == e | string %} selected{% endif %}>Esperar {{ e }} min y cancelar</option>
+{% endfor %}</select>
+<p class="detalle">Si en ese tiempo no puede empezar o no publica ningún socio conforme, no se graba.</p></div>
+</div>
+<p class="detalle">Al repetir, cada reunión nace sin conformidades: se marcan de nuevo en «Modificar» antes de su hora. El recordatorio a los socios llegará con el correo (F4).</p>
+</fieldset>
+{%- endmacro %}

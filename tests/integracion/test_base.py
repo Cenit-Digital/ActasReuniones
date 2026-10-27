@@ -12,7 +12,13 @@ from actas.estados import Estado, TransicionNoValida
 
 def test_migrar_es_idempotente(dsn):
     url, esquema = dsn
-    assert base.migrar(url, esquema) == ["0001_esquema.sql", "0002_panel.sql", "0003_salas.sql", "0005_eventos.sql"]
+    assert base.migrar(url, esquema) == [
+        "0001_esquema.sql",
+        "0002_panel.sql",
+        "0003_salas.sql",
+        "0005_eventos.sql",
+        "0006_programar.sql",
+    ]
     assert base.migrar(url, esquema) == []
 
 
@@ -145,6 +151,7 @@ def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
             "0002_panel.sql",
             "0003_salas.sql",
             "0005_eventos.sql",
+            "0006_programar.sql",
         ]
     finally:
         with psycopg.connect(url, autocommit=True) as c:

@@ -8,6 +8,9 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
   solo tras confirmarlo con un POST, que la base anota como `clave_vista` antes de dar el valor cifrado (@a45). Da de alta y de
   baja socios (@a47). La base no deja al panel leer la contraseña cifrada de otra forma ni cambiar nada (sin UPDATE).
 - «Reintentar» de una reunión en error (V4, migración 0005): solo por la función `pedir_reintento` (SECURITY DEFINER).
+- Programar, modificar (@a49), cancelar (@a50), eliminar a la papelera escribiendo el título y recuperar (@a51): V3, migración
+  0006, solo por sus funciones SECURITY DEFINER. «Grabar ahora» guarda además el título y el tope por columnas. El borrado de
+  verdad lo hace la purga diaria del supervisor: el panel no puede borrar nada.
 - Diagnóstico (V4 de KubernetesInfrastructure#298, ADR 0023 decisión 7): el motivo en lenguaje claro (`diagnostico.py`), el
   historial de eventos y las comprobaciones del latido, todo desde la base. Los registros crudos de los pods, en la consola:
   el panel no tiene permisos sobre Kubernetes.
@@ -31,7 +34,7 @@ el de `busqueda.resaltar`.
 
 import functools
 from collections.abc import Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +50,10 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from actas import busqueda, compartir, diagnostico, enlaces, para_claude, presentacion, salas
+from actas import busqueda, compartir, diagnostico, enlaces, para_claude, planificador, presentacion, salas
 from actas.base import Repositorio, es_uuid
-from actas.conformidad import ConformidadNoValida
+from actas.conformidad import ConformidadNoValida, Peticion
+from actas.estados import ESTADOS_FINALES, Estado
 from actas.formulario import FormularioNoValido, usuario, validar_grabar, validar_socio, version_de_fichero
 from actas.origen import del_proxy, lectura_permitida, permitido
 from actas.registro import Registro
@@ -118,6 +122,20 @@ ESTATICOS = {
 
 
 EVENTOS_SALA = {"sala_creada": "Sala creada", "clave_vista": "Contraseña vista"}
+NO_ELIMINABLE = "Solo se elimina una reunión terminada (transcrita, en error o cancelada) que no esté ya en la papelera."
+NO_PROGRAMADA = "Esa reunión ya no está programada: solo se modifica antes de empezar."
+REPETIR = {"no": "no se repite", "semanal": "cada semana", "mensual": "cada mes"}
+# Los valores de «Grabar» antes de rellenarlo: ahora, sin título y con el tope de F1; si se programa, sin repetir y 15 min.
+GRABAR_VACIO = {
+    "titulo": "",
+    "cuando": "ahora",
+    "fecha": "",
+    "tope": "180",
+    "repetir": "no",
+    "espera": "15",
+    "sala": "",
+    "socios": (),
+}
 
 
 def cargar_textos(raiz: Path | None = None) -> dict[str, str]:
@@ -209,11 +227,35 @@ def _hora(m: datetime) -> str:
     return m.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _fecha(r: Mapping[str, Any]) -> str:
+    creado: datetime = r["creado_en"]
+    return creado.strftime("%Y-%m-%d %H:%M")
+
+
+def _madrid(m: datetime) -> str:
+    """Una hora con zona, en la de Madrid (la base la da ya en la sesión del panel, TimeZone Europe/Madrid)."""
+    return m.astimezone(planificador.MADRID).strftime("%Y-%m-%d %H:%M")
+
+
+def _nombre(r: Mapping[str, Any]) -> str:
+    return r.get("titulo") or f"Reunión del {_fecha(r)}"
+
+
+def _confirmacion(r: Mapping[str, Any]) -> str:
+    """Lo que hay que escribir para eliminarla: su título o, si no tiene (las anteriores a V3), su fecha."""
+    return r.get("titulo") or _fecha(r)
+
+
 def _diagnostico(r: Mapping[str, Any], datos: Mapping[str, Any]) -> dict[str, Any]:
     """Historial de la reunión (sus eventos más lo que dicen sus columnas) y, si está en error, su diagnóstico (@a56) y si se
     ofrece «Reintentar» (@a57): solo con un motivo que se arregle reenviando, el latido fresco y el audio aún en el tmpfs."""
     eventos = datos["eventos"]
-    lineas: list[tuple[datetime, str, str]] = [(r["creado_en"], f"Pedida por {r.get('pedido_por') or 'actas.sh'}", "info")]
+    por = r.get("pedido_por") or "actas.sh"
+    if r.get("programada_para"):
+        texto = "Programada de nuevo, la siguiente de su serie," if r.get("anterior_id") else f"Programada por {por}"
+        lineas: list[tuple[datetime, str, str]] = [(r["creado_en"], f"{texto} para el {_madrid(r['programada_para'])}", "info")]
+    else:
+        lineas = [(r["creado_en"], f"Pedida por {por}", "info")]
     if r.get("parar_pedido_en"):
         lineas.append((r["parar_pedido_en"], "Parada pedida", "info"))
     if r.get("reintento_pedido_en"):
@@ -328,7 +370,9 @@ def crear_app(
         filas = [
             {
                 "id": r["id"],
-                "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
+                "fecha": _fecha(r),
+                "nombre": _nombre(r),
+                "programada": _madrid(r["programada_para"]) if r.get("programada_para") else None,
                 "duracion": presentacion.duracion(r["inicio"], r["fin"]),
                 "estado": r["estado"],
                 "motivo": r["motivo"] or "",
@@ -357,13 +401,22 @@ def crear_app(
             except KeyError:
                 sala = None
         datos = await en_hilo(repo.diagnostico, rid)
+        papelera = r.get("papelera_en") is not None
         contexto = {
             "r": r,
-            "fecha": r["creado_en"].strftime("%Y-%m-%d %H:%M"),
+            "fecha": _fecha(r),
+            "nombre": _nombre(r),
+            "programada": _madrid(r["programada_para"]) if r.get("programada_para") else None,
+            "repetir": REPETIR.get(r.get("repetir") or "no"),
+            "papelera": papelera,
+            "eliminable": not papelera and r["estado"] in ESTADOS_FINALES,
             "duracion": presentacion.duracion(r["inicio"], r["fin"]),
             "socios": presentacion.nombres(r["socios"], socios),
             "conformidades": [(presentacion.nombres([s], socios), v) for s, v in conformidades],
-            "segmentos": [
+            # En la papelera no se enseña lo que dijeron: se ha pedido borrarlo (se puede recuperar).
+            "segmentos": []
+            if papelera
+            else [
                 (presentacion.hhmmss(ini), presentacion.nombres([h], socios), hablantes.get(h, 7), t)
                 for h, ini, _fin, t in segmentos
             ],
@@ -388,6 +441,8 @@ def crear_app(
             r, _conformidades, segmentos = await en_hilo(repo.detalle, rid)
         except KeyError:
             raise HTTPException(404) from None
+        if r.get("papelera_en") is not None:  # V3: se ha pedido borrarla; nada suyo sale del panel mientras tanto
+            raise HTTPException(404)
         return r, segmentos
 
     async def ver_compartir(peticion: Request) -> Response:
@@ -481,7 +536,9 @@ def crear_app(
             ]
         return pagina(peticion, "buscar.html", {"q": q or "", "hallados": hallados, "limite": busqueda.LIMITE})
 
-    async def formulario_grabar(peticion: Request, error: str = "", estado: int = 200) -> Response:
+    async def formulario_grabar(
+        peticion: Request, error: str = "", estado: int = 200, valores: Mapping[str, Any] | None = None
+    ) -> Response:
         activos = [(s["push"], s["nombre"]) for s in await en_hilo(repo.socios) if s["activo"]]
         contexto = {
             "socios": activos,
@@ -489,24 +546,225 @@ def crear_app(
             "version": vigente,
             "texto": texto,
             "error": error,
+            "v": {**GRABAR_VACIO, **(valores or {})},
+            "topes": planificador.TOPES_MIN,
+            "esperas": planificador.ESPERAS_MIN,
         }
         return pagina(peticion, "grabar.html", contexto, estado)
+
+    def valores(form: Any) -> dict[str, Any]:
+        """Lo que se envió, para volver a pintarlo si se rechaza (el formulario no se pierde)."""
+        return {
+            **{k: campo(form, k) for k in ("titulo", "cuando", "fecha", "tope", "repetir", "espera", "sala")},
+            "socios": tuple(s for s in form.getlist("socio") if isinstance(s, str)),
+        }
+
+    async def validar_formulario(form: Any) -> tuple[Peticion, str]:
+        """La sala y los socios conformes de «Grabar» y «Modificar» (@a29, @a6)."""
+        sala = campo(form, "sala")
+        if not es_uuid(sala) or sala not in {s["id"] for s in await en_hilo(repo.salas)}:
+            raise FormularioNoValido("elige la sala en la que se graba")
+        activos = [s["push"] for s in await en_hilo(repo.socios) if s["activo"]]
+        marcados = [s for s in form.getlist("socio") if isinstance(s, str)]
+        return validar_grabar(marcados, campo(form, "version"), activos, (vigente,)), sala
+
+    def programacion_de(form: Any, pedida: Peticion, sala: str) -> planificador.Programacion:
+        return planificador.validar_programacion(
+            campo(form, "titulo"),
+            sala,
+            campo(form, "fecha"),
+            campo(form, "tope"),
+            campo(form, "repetir"),
+            campo(form, "espera"),
+            pedida,
+            datetime.now(UTC),
+        )
 
     async def ver_grabar(peticion: Request) -> Response:
         return await formulario_grabar(peticion)
 
     async def grabar(peticion: Request) -> Response:
+        """«Grabar ahora» (`pedir`, con título y tope) o «Programar» (la función `programar` de la base, V3)."""
         form = await formulario(peticion)
-        marcados = [s for s in form.getlist("socio") if isinstance(s, str)]
-        sala = campo(form, "sala")
-        activos = [s["push"] for s in await en_hilo(repo.socios) if s["activo"]]
+        quien = peticion.headers[CABECERA_USUARIO]
+        cuando = campo(form, "cuando") or "ahora"  # el formulario de F2, sin «cuándo», graba ahora
         try:
-            if not es_uuid(sala) or sala not in {s["id"] for s in await en_hilo(repo.salas)}:
-                raise FormularioNoValido("elige la sala en la que se graba")
-            pedida = validar_grabar(marcados, campo(form, "version"), activos, (vigente,))
+            if cuando not in ("ahora", "programar"):
+                raise FormularioNoValido("elige si se graba ahora o se programa")
+            pedida, sala = await validar_formulario(form)
+            if cuando == "programar":
+                rid = await en_hilo(repo.programar, programacion_de(form, pedida, sala), quien)
+            else:
+                titulo = planificador.titulo(campo(form, "titulo"))
+                tope = planificador.tope(campo(form, "tope") or str(max(planificador.TOPES_MIN)))
+                rid = await en_hilo(repo.pedir, pedida, quien, sala, titulo, tope)
         except ConformidadNoValida as e:
-            return await formulario_grabar(peticion, str(e), 400)
-        rid = await en_hilo(repo.pedir, pedida, peticion.headers[CABECERA_USUARIO], sala)
+            return await formulario_grabar(peticion, str(e), 400, valores(form))
+        except psycopg.errors.CheckViolation:  # la hora pasó entre la comprobación y la base
+            return await formulario_grabar(peticion, "la base no lo admite: revisa la hora", 400, valores(form))
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    # ── Programación, papelera (V3) ───────────────────────────────────────────────────────────────────────────────────
+
+    async def reunion_o_404(peticion: Request) -> tuple[str, dict[str, Any], list[tuple[str, str]]]:
+        rid = peticion.path_params["rid"]
+        if not es_uuid(rid):
+            raise HTTPException(404)
+        try:
+            r, conformidades, _segmentos = await en_hilo(repo.detalle, rid)
+        except KeyError:
+            raise HTTPException(404) from None
+        return rid, r, conformidades
+
+    async def ver_programacion(peticion: Request) -> Response:
+        nombres_sala = {s["id"]: s["nombre"] for s in await en_hilo(repo.salas)}
+        programadas = [
+            {
+                "id": r["id"],
+                "nombre": _nombre(r),
+                "cuando": _madrid(r["programada_para"]),
+                "sala": nombres_sala.get(r.get("sala_id"), "sin sala"),
+                "conformes": r["conformes"],
+                "total": len(r["socios"]),
+                "repetir": REPETIR.get(r["repetir"], r["repetir"]),
+            }
+            for r in await en_hilo(repo.programadas)
+        ]
+        return pagina(peticion, "programacion.html", {"programadas": programadas})
+
+    async def formulario_modificar(
+        peticion: Request,
+        rid: str,
+        r: Mapping[str, Any],
+        v: Mapping[str, Any],
+        error: str = "",
+        estado: int = 200,
+    ) -> Response:
+        activos = [(s["push"], s["nombre"]) for s in await en_hilo(repo.socios) if s["activo"]]
+        contexto = {
+            "rid": rid,
+            "nombre": _nombre(r),
+            "socios": activos,
+            "salas": await en_hilo(repo.salas),
+            "version": vigente,
+            "v": v,
+            "error": error,
+            "topes": planificador.TOPES_MIN,
+            "esperas": planificador.ESPERAS_MIN,
+        }
+        return pagina(peticion, "modificar.html", contexto, estado)
+
+    async def ver_modificar(peticion: Request) -> Response:
+        rid, r, conformidades = await reunion_o_404(peticion)
+        if r["estado"] != Estado.PROGRAMADA:
+            return mensaje(peticion, NO_PROGRAMADA, 409)
+        v = {
+            "titulo": r.get("titulo") or "",
+            "fecha": r["programada_para"].astimezone(planificador.MADRID).strftime("%Y-%m-%dT%H:%M"),
+            "tope": str(r["tope_min"]),
+            "repetir": r["repetir"],
+            "espera": str(r["espera_min"]),
+            "sala": r.get("sala_id") or "",
+            # Marcados, solo los que ya dieron su conformidad para esta reunión con el texto vigente: en una repetición, nadie.
+            "socios": tuple(s for s, version in conformidades if version == vigente),
+        }
+        return await formulario_modificar(peticion, rid, r, v)
+
+    async def modificar(peticion: Request) -> Response:
+        """@a49: por la función `modificar_programada`, que solo cambia una reunión aún programada."""
+        rid, r, _ = await reunion_o_404(peticion)
+        form = await formulario(peticion)
+        if r["estado"] != Estado.PROGRAMADA:
+            return mensaje(peticion, NO_PROGRAMADA, 409)
+        try:
+            pedida, sala = await validar_formulario(form)
+            hecho = await en_hilo(
+                repo.modificar_programada, rid, programacion_de(form, pedida, sala), peticion.headers[CABECERA_USUARIO]
+            )
+        except ConformidadNoValida as e:
+            return await formulario_modificar(peticion, rid, r, valores(form), str(e), 400)
+        except psycopg.errors.CheckViolation:
+            return await formulario_modificar(peticion, rid, r, valores(form), "la base no lo admite: revisa la hora", 400)
+        if hecho is None:
+            raise HTTPException(404)
+        if not hecho:
+            return mensaje(peticion, NO_PROGRAMADA, 409)
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    async def ver_cancelar(peticion: Request) -> Response:
+        rid, r, _ = await reunion_o_404(peticion)
+        if r["estado"] != Estado.PROGRAMADA:
+            return mensaje(peticion, "Solo se cancela una reunión programada.", 409)
+        repite = REPETIR[r["repetir"]] if r.get("repetir") in ("semanal", "mensual") else None
+        contexto = {"rid": rid, "nombre": _nombre(r), "cuando": _madrid(r["programada_para"]), "repite": repite}
+        return pagina(peticion, "cancelar.html", contexto)
+
+    async def cancelar(peticion: Request) -> Response:
+        """@a50: por la función `cancelar_reunion`; no borra nada. `serie=1`: tampoco se programa la siguiente."""
+        rid = peticion.path_params["rid"]
+        if not es_uuid(rid):
+            raise HTTPException(404)
+        serie = {"0": False, "1": True}.get(campo(await formulario(peticion), "serie"))
+        if serie is None:
+            return mensaje(peticion, "Petición no válida.", 400)
+        hecho = await en_hilo(repo.cancelar, rid, peticion.headers[CABECERA_USUARIO], serie)
+        if hecho is None:
+            raise HTTPException(404)
+        if not hecho:
+            return mensaje(peticion, "Solo se cancela una reunión programada.", 409)
+        return RedirectResponse(f"/reuniones/{rid}", status_code=303)
+
+    async def pagina_eliminar(peticion: Request, rid: str, r: Mapping[str, Any], error: str = "", estado: int = 200) -> Response:
+        contexto = {"rid": rid, "nombre": _nombre(r), "confirmacion": _confirmacion(r), "error": error}
+        return pagina(peticion, "eliminar.html", contexto, estado)
+
+    def eliminable(r: Mapping[str, Any]) -> bool:
+        return r["estado"] in ESTADOS_FINALES and r.get("papelera_en") is None
+
+    async def ver_eliminar(peticion: Request) -> Response:
+        rid, r, _ = await reunion_o_404(peticion)
+        if not eliminable(r):
+            return mensaje(peticion, NO_ELIMINABLE, 409)
+        return await pagina_eliminar(peticion, rid, r)
+
+    async def eliminar(peticion: Request) -> Response:
+        """@a51: a la papelera (función `a_papelera`) si se escribe bien su título; la purga la borra a los 7 días."""
+        rid, r, _ = await reunion_o_404(peticion)
+        form = await formulario(peticion)
+        if not eliminable(r):
+            return mensaje(peticion, NO_ELIMINABLE, 409)
+        if campo(form, "confirmacion").strip() != _confirmacion(r):
+            return await pagina_eliminar(peticion, rid, r, "lo escrito no coincide", 400)
+        hecho = await en_hilo(repo.a_papelera, rid, peticion.headers[CABECERA_USUARIO])
+        if hecho is None:
+            raise HTTPException(404)
+        if not hecho:
+            return mensaje(peticion, NO_ELIMINABLE, 409)
+        return RedirectResponse("/papelera", status_code=303)
+
+    async def ver_papelera(peticion: Request) -> Response:
+        reuniones = [
+            {
+                "id": r["id"],
+                "nombre": _nombre(r),
+                "estado": r["estado"],
+                "eliminada": _madrid(r["papelera_en"]),
+                "por": r["papelera_por"],
+                "borrado": _madrid(r["borrado_en"]),
+            }
+            for r in await en_hilo(repo.papelera)
+        ]
+        return pagina(peticion, "papelera.html", {"reuniones": reuniones})
+
+    async def recuperar(peticion: Request) -> Response:
+        rid = peticion.path_params["rid"]
+        if not es_uuid(rid):
+            raise HTTPException(404)
+        hecho = await en_hilo(repo.recuperar, rid, peticion.headers[CABECERA_USUARIO])
+        if hecho is None:
+            raise HTTPException(404)
+        if not hecho:
+            return mensaje(peticion, "Esa reunión no está en la papelera.", 409)
         return RedirectResponse(f"/reuniones/{rid}", status_code=303)
 
     # ── Salas y socios (V2) ───────────────────────────────────────────────────────────────────────────────────────────
@@ -616,6 +874,15 @@ def crear_app(
         Route("/reuniones/{rid}/reintentar", reintentar, methods=["POST"]),
         Route("/reuniones/{rid}/compartir", ver_compartir, methods=["GET"]),
         Route("/reuniones/{rid}/transcripcion.txt", transcripcion_txt, methods=["GET"]),
+        Route("/reuniones/{rid}/modificar", ver_modificar, methods=["GET"]),
+        Route("/reuniones/{rid}/modificar", modificar, methods=["POST"]),
+        Route("/reuniones/{rid}/cancelar", ver_cancelar, methods=["GET"]),
+        Route("/reuniones/{rid}/cancelar", cancelar, methods=["POST"]),
+        Route("/reuniones/{rid}/eliminar", ver_eliminar, methods=["GET"]),
+        Route("/reuniones/{rid}/eliminar", eliminar, methods=["POST"]),
+        Route("/reuniones/{rid}/recuperar", recuperar, methods=["POST"]),
+        Route("/programacion", ver_programacion),
+        Route("/papelera", ver_papelera),
         Route("/buscar", buscar),
         Route("/grabar", ver_grabar, methods=["GET"]),
         Route("/grabar", grabar, methods=["POST"]),

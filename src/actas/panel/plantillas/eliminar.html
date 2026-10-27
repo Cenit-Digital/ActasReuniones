@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set seccion = "reuniones" %}
+{% block titulo %}Eliminar {{ nombre }}{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/">Reuniones</a> <span aria-hidden="true">/</span> <a href="/reuniones/{{ rid }}">{{ nombre }}</a> <span aria-hidden="true">/</span> Eliminar</nav>
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha eliminado: {{ error }}.</p>{% endif %}
+<form method="post" action="/reuniones/{{ rid }}/eliminar" class="tarjeta formulario">
+<h1>¿Eliminar «{{ nombre }}»?</h1>
+<p>Va a la <a href="/papelera">papelera</a>: durante 7 días se puede recuperar y después se borra de verdad, con su transcripción, sus conformidades y su historial. Queda solo una traza sin contenido (cuándo, por qué y quién).</p>
+<p>Las copias de seguridad de la base la conservan unos 6 meses más, hasta que caducan (ADR 0015, decisión 5).</p>
+<div class="campo"><label for="confirmacion">Para confirmar, escribe «{{ confirmacion }}»</label><input id="confirmacion" name="confirmacion" type="text" required maxlength="200" autocomplete="off"></div>
+<div class="acciones">
+<button class="boton boton-peligro" type="submit">Eliminar</button>
+<a class="boton" href="/reuniones/{{ rid }}">Volver</a>
+</div>
+</form>
+{% endblock %}

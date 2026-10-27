@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% import "_programacion.html" as campos %}
 {% set seccion = "grabar" %}
 {% block titulo %}Grabar{% endblock %}
 {% block contenido %}
 <div class="titular">
 <div>
 <h1>Grabar una reunión</h1>
-<p class="entradilla">Solo se graban las pistas de los socios que den su conformidad.</p>
+<p class="entradilla">Ahora o a su hora. Solo se graban las pistas de los socios que den su conformidad.</p>
 </div>
 </div>
 <section class="tarjeta informativo" aria-labelledby="informativo">
@@ -18,36 +19,14 @@
 {% endif %}
 {% endfor %}
 </section>
-{% if error %}<p class="aviso aviso-error" role="alert">No se ha grabado: {{ error }}.</p>{% endif %}
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha grabado ni programado: {{ error }}.</p>{% endif %}
 <form method="post" action="/grabar" class="tarjeta">
-<fieldset>
-<legend>1 · Sala</legend>
-{% if salas %}
-<div class="opciones">
-{% for s in salas %}
-<label class="opcion"><input type="radio" name="sala" value="{{ s.id }}" required{% if salas | length == 1 %} checked{% endif %}> {{ s.nombre }} <span class="detalle">{% if s.ultima %}usada el {{ s.ultima.strftime("%Y-%m-%d") }} · {{ s.reuniones }} reuniones{% else %}sin usar{% endif %}</span></label>
-{% endfor %}
-</div>
-<p class="detalle">Los enlaces de los socios y la contraseña, en <a href="/salas">Salas y socios</a>. <a href="/salas/nueva">Crear sala nueva</a>.</p>
-{% else %}
-<p class="vacio">Aún no hay salas. <a href="/salas/nueva">Crea una</a> y envía a los socios sus enlaces antes de grabar.</p>
-{% endif %}
-</fieldset>
-<fieldset>
-<legend>2 · Socios conformes en esta reunión</legend>
-{% if socios %}
-<div class="opciones">
-{% for sid, nombre in socios %}
-<label class="opcion"><input type="checkbox" name="socio" value="{{ sid }}"> {{ nombre }} <span class="detalle mono">({{ sid }})</span></label>
-{% endfor %}
-</div>
-{% else %}
-<p class="vacio">No hay socios activos. <a href="/salas#socios">Da de alta a los socios</a>.</p>
-{% endif %}
-</fieldset>
+{{ campos.sala(salas, v.sala) }}
+{{ campos.socios(socios, v.socios) }}
+{{ campos.cuando(v, topes, esperas, true) }}
 <input type="hidden" name="version" value="{{ version }}">
 <div class="acciones">
-<button class="boton boton-primario" type="submit">Grabar</button>
+<button class="boton boton-primario" type="submit">Grabar o programar</button>
 <a class="boton" href="/">Cancelar</a>
 </div>
 </form>

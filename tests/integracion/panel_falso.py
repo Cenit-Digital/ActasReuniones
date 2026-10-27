@@ -1,10 +1,12 @@
 """Un repositorio de mentira con todas las pantallas y todos los estados del panel, para los tests sin base (TestClient) y los de
-Chromium (formularios y axe), también «Salas y socios» (V2). Apunta lo que piden «Grabar», «Parar» y «Reintentar»."""
+Chromium (formularios y axe), también «Salas y socios» (V2) y la programación y la papelera (V3). Apunta lo que piden «Grabar»,
+«Parar», «Reintentar», «Programar», «Modificar», «Cancelar», «Eliminar» y «Recuperar»."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from actas.busqueda import FIN, INICIO
+from actas.planificador import MADRID
 
 SOCIOS = {"pablo": "Pablo", "roberto": "Roberto"}
 SALA = "5a1a0000-0000-4000-8000-000000000001"
@@ -18,6 +20,10 @@ RID_PISTAS = "00000000-0000-4000-8000-000000000017"
 _BASE = datetime(2026, 10, 26, 18, 0)
 IMAGEN = "sha-0123456789abcdef0123456789abcdef01234567"
 CHROMIUM = "HeadlessChrome/141.0.7390.37"
+# V3: la programada, el jueves a las 17:30 de Madrid de dentro de una semana (siempre en el futuro), y una en la papelera.
+PARA = datetime.combine(datetime.now(MADRID).date() + timedelta(days=7), datetime.min.time(), MADRID).replace(hour=17, minute=30)
+RID_PAPELERA = "00000000-0000-4000-8000-0000000000aa"
+TITULO = "Socios · seguimiento semanal"
 
 
 def _reunion(i: int, e: str) -> dict[str, Any]:
@@ -33,7 +39,20 @@ def _reunion(i: int, e: str) -> dict[str, Any]:
         "pedido_por": "pablo",
         "trabajo_id": TRABAJO if e == "transcrita" else None,
         "sala_id": SALA,
+        "titulo": TITULO if e in ("transcrita", "programada") else None,
+        "programada_para": PARA if e == "programada" else None,
+        "tope_min": 120 if e == "programada" else 180,
+        "repetir": "semanal" if e == "programada" else "no",
+        "espera_min": 15 if e == "programada" else None,
+        "anterior_id": None,
+        "papelera_en": None,
+        "papelera_por": None,
     }
+
+
+def _papelera() -> dict[str, Any]:
+    r = _reunion(9, "cancelada") | {"id": RID_PAPELERA, "titulo": "Prueba de V3"}
+    return r | {"papelera_en": datetime(2026, 10, 27, 10, 0, tzinfo=UTC), "papelera_por": "pablo", "estado": "transcrita"}
 
 
 def _pistas() -> dict[str, Any]:
@@ -63,6 +82,12 @@ class RepoFalso:
         self.trabajos: list[str] = []
         self.salas_pedidas: list[str | None] = []
         self.reintentos: list[tuple[str, str]] = []
+        self.programaciones: list[tuple[object, str]] = []
+        self.modificaciones: list[tuple[str, object, str]] = []
+        self.cancelaciones: list[tuple[str, str, bool]] = []
+        self.papeleras: list[tuple[str, str]] = []
+        self.recuperaciones: list[tuple[str, str]] = []
+        self.titulos_pedidos: list[tuple[str | None, int]] = []
         # El latido: fresco, con el audio de la reunión en error (`plazo_envio`) aún en el tmpfs.
         self.latido: dict[str, Any] | None = {
             "chromium": CHROMIUM,
@@ -82,7 +107,7 @@ class RepoFalso:
         return self.activa
 
     def detalle(self, rid: str) -> tuple[dict[str, Any], list[tuple[str, str]], list[tuple[str, int, int, str]]]:
-        por_id = {r["id"]: r for r in self.ultimas(0)} | {RID_PISTAS: _pistas()}
+        por_id = {r["id"]: r for r in self.ultimas(0)} | {RID_PISTAS: _pistas(), RID_PAPELERA: _papelera()}
         if rid not in por_id:
             raise KeyError(rid)
         segmentos = [
@@ -90,6 +115,8 @@ class RepoFalso:
             ("roberto", 280_000, 290_000, "De acuerdo. Traigo las cifras de marketing para revisarlas juntos."),
             ("invitado", 425_000, 430_000, "Cerramos el presupuesto el jueves y lo mandamos a la gestoría."),
         ]
+        if rid == RIDS["programada"]:  # V3: solo Pablo ha dado ya su conformidad, con el texto vigente
+            return por_id[rid], self.conformidades(rid), []
         return por_id[rid], [("pablo", "2026-10-26"), ("roberto", "2026-10-26")], segmentos
 
     def buscar(self, *_: object) -> list[dict[str, Any]]:
@@ -107,10 +134,46 @@ class RepoFalso:
         self.trabajos.append(trabajo)
         return RIDS["transcrita"] if trabajo == TRABAJO else None
 
-    def pedir(self, pedida: object, usuario: str, sala: str | None = None) -> str:
+    def pedir(self, pedida: object, usuario: str, sala: str | None = None, titulo: str | None = None, tope_min: int = 180) -> str:
         self.pedidas.append((pedida, usuario))
         self.salas_pedidas.append(sala)
+        self.titulos_pedidos.append((titulo, tope_min))
         return RIDS["grabando"]
+
+    # ── V3 ──
+
+    def _existe(self, rid: str) -> bool:
+        return rid in RIDS.values() or rid in (RID_PISTAS, RID_PAPELERA)
+
+    def programar(self, p: object, usuario: str) -> str:
+        self.programaciones.append((p, usuario))
+        return RIDS["programada"]
+
+    def modificar_programada(self, rid: str, p: object, usuario: str) -> bool | None:
+        self.modificaciones.append((rid, p, usuario))
+        return rid == RIDS["programada"] if self._existe(rid) else None
+
+    def cancelar(self, rid: str, usuario: str, serie: bool = False) -> bool | None:
+        self.cancelaciones.append((rid, usuario, serie))
+        return rid == RIDS["programada"] if self._existe(rid) else None
+
+    def a_papelera(self, rid: str, usuario: str) -> bool | None:
+        self.papeleras.append((rid, usuario))
+        return rid in (RIDS["transcrita"], RIDS["error"], RIDS["cancelada"]) if self._existe(rid) else None
+
+    def recuperar(self, rid: str, usuario: str) -> bool | None:
+        self.recuperaciones.append((rid, usuario))
+        return rid == RID_PAPELERA if self._existe(rid) else None
+
+    def programadas(self) -> list[dict[str, Any]]:
+        return [r | {"conformes": 1} for r in self.ultimas(0) if r["estado"] == "programada"]
+
+    def conformidades(self, rid: str) -> list[tuple[str, str]]:
+        return [("pablo", "v1")] if rid == RIDS["programada"] else []
+
+    def papelera(self) -> list[dict[str, Any]]:
+        r = _papelera()
+        return [r | {"borrado_en": r["papelera_en"] + timedelta(days=7)}]
 
     def socios(self) -> list[dict[str, Any]]:
         return [{"push": p, "nombre": n, "correo": None, "activo": True} for p, n in SOCIOS.items()] + [

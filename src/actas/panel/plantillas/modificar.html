@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% import "_programacion.html" as campos %}
+{% set seccion = "programacion" %}
+{% block titulo %}Modificar {{ nombre }}{% endblock %}
+{% block contenido %}
+<nav class="migas" aria-label="Ruta"><a href="/programacion">Programación</a> <span aria-hidden="true">/</span> <a href="/reuniones/{{ rid }}">{{ nombre }}</a> <span aria-hidden="true">/</span> Modificar</nav>
+<div class="titular">
+<div>
+<h1>Modificar «{{ nombre }}»</h1>
+<p class="entradilla">Se puede cambiar todo hasta que empiece. Los cambios quedan en el historial.</p>
+</div>
+</div>
+{% if error %}<p class="aviso aviso-error" role="alert">No se ha guardado: {{ error }}.</p>{% endif %}
+<form method="post" action="/reuniones/{{ rid }}/modificar" class="tarjeta">
+{{ campos.sala(salas, v.sala) }}
+{{ campos.socios(socios, v.socios) }}
+{{ campos.cuando(v, topes, esperas, false) }}
+<input type="hidden" name="version" value="{{ version }}">
+<div class="acciones">
+<button class="boton boton-primario" type="submit">Guardar cambios</button>
+<a class="boton" href="/reuniones/{{ rid }}">Volver</a>
+<a class="boton boton-peligro" href="/reuniones/{{ rid }}/cancelar">Cancelar esta grabación</a>
+</div>
+</form>
+{% endblock %}
