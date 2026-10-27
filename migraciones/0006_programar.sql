@@ -217,7 +217,7 @@ CREATE FUNCTION cancelar_reunion(p_id uuid, p_usuario text, p_serie boolean) RET
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
     UPDATE reuniones
-    SET estado = 'cancelada', motivo = 'panel', actualizado_en = now(), repetir = CASE WHEN p_serie THEN 'no' ELSE repetir END
+    SET estado = 'cancelada', actualizado_en = now(), repetir = CASE WHEN p_serie THEN 'no' ELSE repetir END
     WHERE id = p_id AND estado = 'programada';
     IF NOT FOUND THEN
         RETURN CASE WHEN EXISTS (SELECT 1 FROM reuniones WHERE id = p_id) THEN false END;

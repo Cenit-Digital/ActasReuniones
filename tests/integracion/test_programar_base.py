@@ -258,7 +258,7 @@ def test_a50_cancelar_no_borra_filas(repo_panel, repo):
     rid = repo_panel.programar(_prog(_sala(repo), repetir="semanal"), USUARIO)
     assert repo_panel.cancelar(rid, USUARIO) is True
     r = repo.reunion(rid)
-    assert (r["estado"], r["repetir"]) == ("cancelada", "semanal")
+    assert (r["estado"], r["repetir"], r["motivo"]) == ("cancelada", "semanal", None)  # quién, en el historial
     assert (_cuenta(repo, "reuniones", rid), _cuenta(repo, "conformidades", rid)) == (1, 2)
     assert [(e["tipo"], e["detalle"]) for e in repo.eventos(rid)] == [
         ("estado", {"desde": "programada", "hasta": "cancelada", "usuario": USUARIO})
