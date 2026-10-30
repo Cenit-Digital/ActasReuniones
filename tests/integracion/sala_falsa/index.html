@@ -21,6 +21,8 @@ if (q.has("sinpar")) window.session.rpcs = {};
 // grabador sigue abierto (srcObject.onended no llega). window.__paradas cuenta las paradas de ese grabador.
 if (q.has("elemento")) {
   const v = document.createElement("audio");
+  // ?vivo: el elemento reproduce audio vivo (una pista de un AudioContext), como un socio conectado.
+  if (q.has("vivo")) v.srcObject = new AudioContext().createMediaStreamDestination().stream;
   v.recorder = {};
   v.recorder.stop = () => { window.__paradas = (window.__paradas || 0) + 1; delete v.recorder; descargar(); };
   window.session.rpcs = {u1: {videoElement: v}};

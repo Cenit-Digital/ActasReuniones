@@ -23,7 +23,7 @@ from pathlib import Path
 from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium, version_chromium
 from actas.enlaces import BASE
-from actas.grabador import SALA_RESCATE, Grabacion, Sala, sala_de_reunion
+from actas.grabador import SALA_RESCATE, Grabacion, Sala, Vigilancia, sala_de_reunion
 from actas.metricas import Metricas, servir
 from actas.plataforma import Plataforma
 from actas.registro import Registro
@@ -62,7 +62,7 @@ class _GrabacionConCdp:
         assert self._g is not None
         return self._g.vistos()
 
-    def vigilar(self) -> dict[str, int]:
+    def vigilar(self) -> dict[str, Vigilancia]:
         assert self._g is not None
         return self._g.vigilar()
 

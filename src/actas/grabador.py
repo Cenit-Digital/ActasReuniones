@@ -60,7 +60,9 @@ VISTOS_SIN_SAL_JS = """JSON.stringify((typeof session === 'undefined' || !sessio
 
 # Anota cada elemento al que VDO.Ninja da un `recorder` (recordLocalVideo hace `video.recorder = {}`). Sin tocar nada más: tras
 # la primera asignación el elemento tiene su propia propiedad, así que `delete video.recorder` y una grabación nueva (que vuelve
-# a pasar por el setter) se comportan como sin el script.
+# a pasar por el setter) se comportan como sin el script. Lo único que cambia: `"recorder" in v` vale true en todo elemento.
+# VDO.Ninja v30.2 solo lo usa en la reconexión WHEP (lib.js ~62180), que no usa la sala, y ahí su `recorder.stop()` va en un
+# try/catch propio, separado del resto de la limpieza.
 GRABADORES_JS = """(() => {
   window.__grabadores = window.__grabadores || new Set();
   Object.defineProperty(HTMLMediaElement.prototype, 'recorder', {
@@ -93,8 +95,11 @@ PARAR_JS = (
 })()"""
 )
 
-# Para el grabador que lleva dos vigilancias sin par en session.rpcs (el socio colgó): así su descarga termina entera. Si el
-# socio vuelve, VDO.Ninja graba en otro `<id>_<ms>.webm`. Devuelve cuántos siguen grabando y cuántos se pararon.
+# Para el grabador que lleva dos vigilancias seguidas huérfano: sin par en session.rpcs Y sin audio vivo (sin srcObject, o
+# todas sus pistas de audio terminadas o mudas: el socio colgó). Así su descarga termina entera; si el socio vuelve,
+# VDO.Ninja graba en otro `<id>_<ms>.webm`. Un elemento con audio vivo nunca se para aunque haya salido de session.rpcs (una
+# renegociación que cambiara el elemento): perder ese audio sería peor que esperar a «Parar». Devuelve cuántos siguen
+# grabando, cuántos se pararon y cuántos pares con elemento tiene la página (su socio está conectado).
 HUERFANOS_JS = (
     """(() => {
   """
@@ -102,17 +107,28 @@ HUERFANOS_JS = (
     + """
   const rpcs = (typeof session === 'undefined' || !session.rpcs) ? {} : session.rpcs;
   const conPar = new Set(Object.values(rpcs).map(r => r && r.videoElement).filter(Boolean));
+  const sinAudio = (v) => {
+    const s = v.srcObject;
+    if (!s || typeof s.getAudioTracks !== 'function') return true;
+    return s.getAudioTracks().every(t => t.readyState === 'ended' || t.muted);
+  };
   let grabando = 0, parados = 0;
   for (const v of grabados()) {
     if (!activo(v)) continue;
-    if (conPar.has(v)) { v.__huerfano = 0; grabando++; continue; }
+    if (conPar.has(v) || !sinAudio(v)) { v.__huerfano = 0; grabando++; continue; }
     v.__huerfano = (v.__huerfano || 0) + 1;
     if (v.__huerfano < 2) { grabando++; continue; }
     try { v.recorder.stop(); parados++; } catch (e) {}
   }
-  return {grabando, parados};
+  return {grabando, parados, pares: conPar.size};
 })()"""
 )
+
+
+@dataclass(frozen=True)
+class Vigilancia:
+    grabando: int  # grabadores que siguen grabando en la página
+    conectado: bool  # el socio de la página tiene un par con elemento: está en la sala y su audio llega
 
 
 @dataclass(frozen=True)
@@ -231,19 +247,19 @@ class Grabacion:
                 salida[s] = []
         return salida
 
-    def vigilar(self) -> dict[str, int]:
-        """Cuántos grabadores siguen grabando en cada página, tras parar los huérfanos (HUERFANOS_JS). Una página que no
-        responde cuenta como que no graba nada."""
+    def vigilar(self) -> dict[str, Vigilancia]:
+        """Por página, tras parar los huérfanos (HUERFANOS_JS): cuántos grabadores siguen grabando y si su socio está
+        conectado (algún par con elemento). Una página que no responde cuenta como que no graba ni ve a nadie."""
         salida = {}
         for s, (_, ses) in self.paginas.items():
             try:
                 r = self.cdp.evaluar(ses, HUERFANOS_JS, espera=10) or {}
-                salida[s] = int(r.get("grabando", 0))
+                salida[s] = Vigilancia(int(r.get("grabando", 0)), int(r.get("pares", 0)) > 0)
                 if r.get("parados"):
                     self.registro(s, "grabaciones huérfanas paradas:", int(r["parados"]))
             except Exception as e:  # noqa: BLE001
                 self.registro(s, "vigilar grabadores:", type(e).__name__)
-                salida[s] = 0
+                salida[s] = Vigilancia(0, False)
         return salida
 
     def parar(self) -> bool:
@@ -284,7 +300,7 @@ class Grabacion:
                 with p.open("rb") as f:
                     if f.read(len(EBML)) != EBML:
                         continue
-                os.link(p, final)
+                os.link(p, final, follow_symlinks=False)
                 rescatadas.append(final)
             except OSError as e:
                 self.registro("no se pudo rescatar una descarga a medias:", type(e).__name__)

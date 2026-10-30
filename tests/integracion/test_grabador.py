@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from actas.cdp import Cdp
-from actas.grabador import Grabacion, Sala
+from actas.grabador import Grabacion, Sala, Vigilancia
 from actas.pistas import pistas_de
 from actas.registro import Registro
 
@@ -109,31 +109,54 @@ def test_el_grabador_de_un_socio_que_colgo_se_para_igual_y_su_descarga_termina(c
     cdp.cerrar()
 
 
-def test_vigilar_para_el_grabador_huerfano_a_la_segunda_vuelta_y_nunca_el_vigente(chromium, sala_falsa, tmp_path):
+def test_vigilar_para_el_grabador_huerfano_a_la_segunda_vuelta(chromium, sala_falsa, tmp_path):
     """@a63. El socio que cuelga a mitad de reunión (la del 2026-10-28 perdió así a uno): su grabador se para a la
-    segunda vigilancia sin par, y su pista queda entera aunque la reunión siga. El de un socio que sigue en la sala no se toca."""
-    colgado = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&colgado=300&")
-    vigente = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&")
+    segunda vigilancia sin par, y su pista queda entera aunque la reunión siga."""
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&colgado=300&")
     cdp = Cdp(chromium, Registro())
     lineas: list[str] = []
-    g = Grabacion(cdp, colgado, ("socioa",), tmp_path / "r", lambda *p: lineas.append(" ".join(map(str, p))))
+    g = Grabacion(cdp, sala, ("socioa",), tmp_path / "r", lambda *p: lineas.append(" ".join(map(str, p))))
     g.empezar()
-    h = Grabacion(cdp, vigente, ("sociob",), tmp_path / "s", lambda *p: None)
-    h.empezar()
     time.sleep(1.5)
-    paradas = "(window.__paradas || 0)"
-    assert g.vigilar() == {"socioa": 1}  # primera vuelta sin par: aún no
-    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 0
-    assert g.vigilar() == {"socioa": 0}  # segunda: se para
-    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 1
+    ses, paradas = g.paginas["socioa"][1], "(window.__paradas || 0)"
+    assert g.vigilar() == {"socioa": Vigilancia(1, False)}  # primera vuelta sin par: aún no
+    assert cdp.evaluar(ses, paradas) == 0
+    assert g.vigilar() == {"socioa": Vigilancia(0, False)}  # segunda: se para
+    assert cdp.evaluar(ses, paradas) == 1
     assert any("huérfanas paradas: 1" in linea for linea in lineas)
-    assert g.vigilar() == {"socioa": 0}  # ya parado: no se para dos veces
-    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 1
-    for _ in range(3):
-        assert h.vigilar() == {"sociob": 1}
-    assert cdp.evaluar(h.paginas["sociob"][1], paradas) == 0
-    assert h.parar() is True and g.parar() is True
+    assert g.vigilar() == {"socioa": Vigilancia(0, False)}  # ya parado: no se para dos veces
+    assert cdp.evaluar(ses, paradas) == 1
+    assert g.parar() is True
     assert [p.name.split("_")[0] for p in (tmp_path / "r").iterdir()] == ["socioa"]
+    cdp.cerrar()
+
+
+def test_vigilar_nunca_para_el_grabador_de_un_socio_que_sigue_en_la_sala(chromium, sala_falsa, tmp_path):
+    """@a63. El de un socio que sigue conectado no se toca en ninguna vigilancia."""
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&")
+    cdp = Cdp(chromium, Registro())
+    g = Grabacion(cdp, sala, ("sociob",), tmp_path / "r", lambda *p: None)
+    g.empezar()
+    time.sleep(1.5)
+    for _ in range(3):
+        assert g.vigilar() == {"sociob": Vigilancia(1, True)}
+    assert cdp.evaluar(g.paginas["sociob"][1], "(window.__paradas || 0)") == 0
+    assert g.parar() is True
+    assert [p.name.split("_")[0] for p in (tmp_path / "r").iterdir()] == ["sociob"]
+    cdp.cerrar()
+
+
+def test_un_grabador_sin_par_pero_con_audio_vivo_nunca_se_para_en_la_vigilancia(chromium, sala_falsa, tmp_path):
+    """Si VDO.Ninja cambiara el elemento de un par sin cortar su audio, ese grabador sigue grabando hasta «Parar»."""
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&vivo&colgado=300&")
+    cdp = Cdp(chromium, Registro())
+    g = Grabacion(cdp, sala, ("socioa",), tmp_path / "r", lambda *p: None)
+    g.empezar()
+    time.sleep(1.5)
+    for _ in range(3):
+        assert g.vigilar() == {"socioa": Vigilancia(1, False)}
+    assert cdp.evaluar(g.paginas["socioa"][1], "(window.__paradas || 0)") == 0
+    assert g.parar() is True  # «Parar» sí lo para
     cdp.cerrar()
 
 

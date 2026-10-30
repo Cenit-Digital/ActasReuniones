@@ -26,7 +26,7 @@ import shutil
 import stat
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,6 +37,7 @@ from actas.aviso import sin_coincidencia
 from actas.base import PROGRAMADO, Repositorio
 from actas.conformidad import ConformidadNoValida, validar
 from actas.estados import TOPE_GRABACION_S, Estado, TransicionNoValida, motivo_parada, nadie_entro
+from actas.grabador import Vigilancia
 from actas.metricas import Metricas
 from actas.pistas import Pista, PistasNoValidas, a_medias, pistas_de
 from actas.planificador import decidir, siguiente
@@ -60,7 +61,7 @@ class Grabador(Protocol):
     def empezar(self) -> None: ...
     def reanudar(self) -> None: ...
     def vistos(self) -> dict[str, list[str]]: ...
-    def vigilar(self) -> dict[str, int]: ...
+    def vigilar(self) -> dict[str, Vigilancia]: ...
     def viva(self) -> bool: ...
     def parar(self) -> bool: ...
 
@@ -81,6 +82,7 @@ class _Activa:
     completas: bool = True  # si todas las descargas terminaron al parar
     faltan: int = 0  # socios conformes que no publican, en el último aviso anotado
     sin_grabar: int = 0  # socios conformes que publican pero cuya página no graba, en el último aviso anotado
+    sospechosos: set[str] = field(default_factory=set)  # conectados y sin grabar en la vigilancia anterior
     rescatadas: int = 0  # descargas a medias rescatadas al parar
     tope_s: int = TOPE_GRABACION_S  # el de la reunión (V3)
     # La de una programada: si en ella no publica ningún socio conforme, se cancela. Se cuenta desde que empieza a grabar, no
@@ -278,8 +280,11 @@ class Supervisor:
                 self._parar("nadie_entro")
                 return
             # Tras parar los grabadores huérfanos: un socio que publica y cuya página no graba es audio que se pierde.
-            grabando = a.grabador.vigilar()
-            sin_grabar = [s for s in a.socios if s in vistos.get(s, []) and not grabando.get(s)]
+            # Conectado ahora (un par vivo en su página, no los streams que la sala anunció alguna vez) y sin grabar en dos
+            # vigilancias seguidas: así no avisa el socio que colgó ni el que acaba de entrar (VDO.Ninja graba a los 2 s).
+            ahora = {s for s, v in a.grabador.vigilar().items() if v.conectado and not v.grabando}
+            sin_grabar = sorted(ahora & a.sospechosos)
+            a.sospechosos = ahora
             self.metricas.socios_sin_grabar = len(sin_grabar)
             if len(faltan) != a.faltan or len(sin_grabar) != a.sin_grabar:
                 detalle = {"faltan": len(faltan)}

@@ -10,7 +10,7 @@ import pytest
 from actas import salas
 from actas.conformidad import Peticion
 from actas.estados import TOPE_GRABACION_S, Estado
-from actas.grabador import Sala, sala_de_reunion
+from actas.grabador import Sala, Vigilancia, sala_de_reunion
 from actas.metricas import Metricas
 from actas.purga import PLAZO_AUDIO_S
 from actas.registro import Registro
@@ -30,7 +30,7 @@ class GrabacionFalsa:
         self.fallo_al_parar = False
         self.reanudada = False
         self.ver: dict[str, list[str]] = {s: [s] for s in socios}
-        self.grabando: dict[str, int] = {s: 1 for s in socios}
+        self.grabando: dict[str, Vigilancia] = {s: Vigilancia(1, True) for s in socios}
         self.vigiladas = 0
         self.rescatadas = 0
         GrabacionFalsa.creadas.append(self)
@@ -247,22 +247,25 @@ def test_aviso_sin_coincidencia_al_minuto(entorno):
 
 
 def test_un_socio_que_publica_y_no_se_graba_se_avisa_en_el_historial(entorno):
-    """@a65. Grabadores huérfanos: la vigilancia de cada minuto para los huérfanos (vigilar) y avisa si un socio que publica en la
-    sala no tiene ningún grabador, con su evento (el panel lo pinta en rojo) y su métrica."""
+    """@a65. Grabadores huérfanos: la vigilancia de cada minuto para los huérfanos (vigilar) y avisa si un socio conectado no
+    tiene ningún grabador en dos vigilancias seguidas, con su evento (el panel lo pinta en rojo) y su métrica."""
     sup, repo, _, metricas, reloj, _ = entorno
     rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
     sup.paso()
     g = GrabacionFalsa.creadas[0]
-    g.grabando = {"socioa": 1, "sociob": 0}
+    g.grabando = {"socioa": Vigilancia(1, True), "sociob": Vigilancia(0, True)}
     reloj.t += 61
     sup.paso()
     assert g.vigiladas == 1
+    assert metricas.socios_sin_grabar == 0  # una sola vigilancia: puede que acabe de entrar
+    reloj.t += 61
+    sup.paso()
     assert metricas.socios_sin_grabar == 1
     assert repo.eventos(rid)[-1]["detalle"] == {"faltan": 0, "sin_grabar": 1}
     reloj.t += 61
     sup.paso()  # sin cambios: no se repite el evento
     assert [e["tipo"] for e in repo.eventos(rid)].count("aviso") == 1
-    g.grabando = {"socioa": 1, "sociob": 1}
+    g.grabando = {"socioa": Vigilancia(1, True), "sociob": Vigilancia(1, True)}
     reloj.t += 61
     sup.paso()
     assert metricas.socios_sin_grabar == 0
@@ -272,16 +275,18 @@ def test_un_socio_que_publica_y_no_se_graba_se_avisa_en_el_historial(entorno):
     assert metricas.socios_sin_grabar == 0
 
 
-def test_un_socio_que_no_publica_no_cuenta_como_sin_grabar(entorno):
+def test_un_socio_que_colgo_no_cuenta_como_sin_grabar(entorno):
+    """El que colgó: la sala lo anunció (vistos lo sigue teniendo) pero su página ya no tiene par. No es audio perdido."""
     sup, repo, _, metricas, reloj, _ = entorno
     rid = repo.pedir(Peticion(("socioa",), "v1"))
     sup.paso()
     g = GrabacionFalsa.creadas[0]
-    g.ver, g.grabando = {"socioa": []}, {"socioa": 0}
-    reloj.t += 61
-    sup.paso()
+    g.grabando = {"socioa": Vigilancia(0, False)}
+    for _ in range(3):
+        reloj.t += 61
+        sup.paso()
     assert metricas.socios_sin_grabar == 0
-    assert repo.eventos(rid)[-1]["detalle"] == {"faltan": 1}
+    assert all("sin_grabar" not in e["detalle"] for e in repo.eventos(rid))
 
 
 def test_lo_rescatado_al_parar_queda_en_el_historial_y_se_envia(entorno):
