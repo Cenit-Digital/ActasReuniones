@@ -2,10 +2,10 @@
 pasó con códigos y números: nunca texto de la reunión, nombres de fichero, mensajes de excepción ni secretos.
 
 La base impone otra vez los tipos, las claves y la forma de los valores (CHECK de `migraciones/0005_eventos.sql`; los tipos,
-desde V3, en la 0006): las listas tienen que ser las mismas, lo comprueba tests/unit/test_eventos.py. La contraseña de la
-sala y el token solo los conoce el proceso: que ningún valor sea uno de ellos (o lo contenga, si el secreto tiene al menos 8
-caracteres: uno más corto podría aparecer por azar dentro de un código y bloquear un cambio de estado) se comprueba aquí, antes
-de escribir.
+desde V3, en la 0006; las claves de los grabadores huérfanos, en la 0007): las listas tienen que ser las mismas, lo
+comprueba tests/unit/test_eventos.py. La contraseña de la sala y el token solo los conoce el proceso: que ningún valor sea
+uno de ellos (o lo contenga, si el secreto tiene al menos 8 caracteres: uno más corto podría aparecer por azar dentro de un
+código y bloquear un cambio de estado) se comprueba aquí, antes de escribir.
 """
 
 import re
@@ -42,6 +42,9 @@ CLAVES = frozenset(
         "faltan",
         "usuario",
         "resultado",
+        "rescatadas",  # descargas a medias rescatadas al parar (0007)
+        "perdidas",  # descargas a medias que no se envían (0007)
+        "sin_grabar",  # socios que publican y cuya página no graba (0007)
     }
 )
 _SECRETO_LARGO = 8

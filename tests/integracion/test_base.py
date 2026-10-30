@@ -18,6 +18,7 @@ def test_migrar_es_idempotente(dsn):
         "0003_salas.sql",
         "0005_eventos.sql",
         "0006_programar.sql",
+        "0007_grabadores_huerfanos.sql",
     ]
     assert base.migrar(url, esquema) == []
 
@@ -152,6 +153,7 @@ def test_la_contrasena_de_las_migraciones_va_aparte_del_conninfo(dsn):
             "0003_salas.sql",
             "0005_eventos.sql",
             "0006_programar.sql",
+            "0007_grabadores_huerfanos.sql",
         ]
     finally:
         with psycopg.connect(url, autocommit=True) as c:

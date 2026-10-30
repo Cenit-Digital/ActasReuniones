@@ -33,6 +33,13 @@ class Pista:
     desfase_ms: int
 
 
+def a_medias(ficheros: list[str]) -> int:
+    """Cuántas descargas a medias (`<x>.webm.crdownload`) no tienen su `<x>.webm`: audio que no se envía. Nunca se descarta en
+    silencio (reunión del 2026-10-28: una pista se quedó así y nadie lo vio); el supervisor lo anota en el historial."""
+    nombres = set(ficheros)
+    return sum(1 for n in ficheros if n.endswith(_TEMPORAL) and n.removesuffix(_TEMPORAL[0]) not in nombres)
+
+
 def pistas_de(ficheros: list[str], conformes: list[str]) -> list[Pista]:
     """Las pistas ordenadas por marca, con su desfase. Ignora descargas a medias y ficheros que no son grabaciones."""
     encontradas: list[tuple[int, str, str]] = []

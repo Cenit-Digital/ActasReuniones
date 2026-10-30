@@ -38,7 +38,7 @@ from actas.base import PROGRAMADO, Repositorio
 from actas.conformidad import ConformidadNoValida, validar
 from actas.estados import TOPE_GRABACION_S, Estado, TransicionNoValida, motivo_parada, nadie_entro
 from actas.metricas import Metricas
-from actas.pistas import Pista, PistasNoValidas, pistas_de
+from actas.pistas import Pista, PistasNoValidas, a_medias, pistas_de
 from actas.planificador import decidir, siguiente
 from actas.purga import Audio, a_borrar
 from actas.registro import Registro
@@ -54,9 +54,13 @@ _VERSION = re.compile(r"[A-Za-z0-9._/:-]{1,80}", re.ASCII)  # la forma que admit
 
 
 class Grabador(Protocol):
+    @property
+    def rescatadas(self) -> int: ...  # descargas a medias que rescató la última parada
+
     def empezar(self) -> None: ...
     def reanudar(self) -> None: ...
     def vistos(self) -> dict[str, list[str]]: ...
+    def vigilar(self) -> dict[str, int]: ...
     def viva(self) -> bool: ...
     def parar(self) -> bool: ...
 
@@ -76,6 +80,8 @@ class _Activa:
     parada: str | None = None  # motivo de una parada ya hecha cuyo cambio de estado aún no llegó a la base
     completas: bool = True  # si todas las descargas terminaron al parar
     faltan: int = 0  # socios conformes que no publican, en el último aviso anotado
+    sin_grabar: int = 0  # socios conformes que publican pero cuya página no graba, en el último aviso anotado
+    rescatadas: int = 0  # descargas a medias rescatadas al parar
     tope_s: int = TOPE_GRABACION_S  # el de la reunión (V3)
     # La de una programada: si en ella no publica ningún socio conforme, se cancela. Se cuenta desde que empieza a grabar, no
     # desde su hora: si empezó tarde (otra grabación en marcha), los socios tienen su espera entera para entrar (Pablo,
@@ -271,9 +277,18 @@ class Supervisor:
                 self.log("ningún socio conforme entró en la sala en su espera: se cancela")
                 self._parar("nadie_entro")
                 return
-            if len(faltan) != a.faltan:
-                a.faltan = len(faltan)
-                self.repo.anotar_evento(a.rid, "aviso", {"faltan": a.faltan})
+            # Tras parar los grabadores huérfanos: un socio que publica y cuya página no graba es audio que se pierde.
+            grabando = a.grabador.vigilar()
+            sin_grabar = [s for s in a.socios if s in vistos.get(s, []) and not grabando.get(s)]
+            self.metricas.socios_sin_grabar = len(sin_grabar)
+            if len(faltan) != a.faltan or len(sin_grabar) != a.sin_grabar:
+                detalle = {"faltan": len(faltan)}
+                if sin_grabar or a.sin_grabar:
+                    detalle["sin_grabar"] = len(sin_grabar)
+                a.faltan, a.sin_grabar = len(faltan), len(sin_grabar)
+                self.repo.anotar_evento(a.rid, "aviso", detalle)
+            if sin_grabar:
+                self.log(f"AVISO: {len(sin_grabar)} socio(s) conforme(s) publican en la sala pero su página no graba")
             if faltan:
                 # Solo el número: los IDs que publican en la sala los elige cada cliente.
                 self.log(f"AVISO: {len(faltan)} socio(s) conforme(s) no publican en la sala; ¿entraron sin su enlace con &push?")
@@ -283,6 +298,7 @@ class Supervisor:
         a = self.activa
         try:
             completas = a.grabador.parar()
+            a.rescatadas = a.grabador.rescatadas
         except Exception as e:  # noqa: BLE001 — la reunión no puede quedarse «grabando»: se envía lo que haya
             self.log("la parada falló:", type(e).__name__)
             completas = False
@@ -298,9 +314,12 @@ class Supervisor:
         if a.parada == "nadie_entro":
             self.repo.mover(a.rid, Estado.GRABANDO, Estado.CANCELADA, motivo=a.parada, fin=True)
         else:
-            self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=a.parada, fin=True, detalle={"completas": a.completas})
+            detalle: dict[str, Any] = {"completas": a.completas}
+            if a.rescatadas:
+                detalle["rescatadas"] = a.rescatadas
+            self.repo.mover(a.rid, Estado.GRABANDO, Estado.GRABADA, motivo=a.parada, fin=True, detalle=detalle)
         self.activa = None
-        self.metricas.grabando = self.metricas.aviso_sin_coincidencia = 0
+        self.metricas.grabando = self.metricas.aviso_sin_coincidencia = self.metricas.socios_sin_grabar = 0
         self.metricas.socios_esperados = self.metricas.socios_vistos = 0
         self.log("grabación parada:", a.parada)
         if a.parada == "nadie_entro":
@@ -357,7 +376,10 @@ class Supervisor:
             codigo, cuerpo = self.plataforma.crear(directorio, pistas, rid)
         except PistasNoValidas as e:  # o enlaces, FIFOs o ficheros vacíos en el tmpfs (plataforma._abrir): no se sube nada
             self.log("pistas no válidas:", e)
-            self._error(rid, Estado.GRABADA, "pistas", {"causa": e.causa, "ficheros": len(nombres)})
+            detalle_error: dict[str, Any] = {"causa": e.causa, "ficheros": len(nombres)}
+            if perdidas := a_medias(nombres):
+                detalle_error["perdidas"] = perdidas
+            self._error(rid, Estado.GRABADA, "pistas", detalle_error)
             return
         d = interpretar_creacion(codigo, cuerpo)
         n = envio.intento + 1 if envio else 0
@@ -371,7 +393,12 @@ class Supervisor:
         if d.accion == "error":
             self._error(rid, Estado.GRABADA, d.motivo or "plataforma")
             return
-        self.repo.mover(rid, Estado.GRABADA, Estado.TRANSCRIBIENDO, trabajo_id=d.trabajo_id, detalle={"pistas": len(pistas)})
+        # Una descarga a medias que no se pudo rescatar no se envía, pero queda en el historial: nunca se pierde en silencio.
+        detalle: dict[str, Any] = {"pistas": len(pistas)}
+        if perdidas := a_medias(nombres):
+            detalle["perdidas"] = perdidas
+            self.log("descargas a medias que no se envían:", perdidas)
+        self.repo.mover(rid, Estado.GRABADA, Estado.TRANSCRIBIENDO, trabajo_id=d.trabajo_id, detalle=detalle)
         self._respuesta(rid, "envio", codigo, d.accion, d.motivo, n)
         self.sondeos[rid] = _Sondeo(0, self.reloj() + espera(0), self.reloj())
         self.log("enviada a la plataforma:", len(pistas), "pistas")

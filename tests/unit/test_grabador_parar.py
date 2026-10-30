@@ -5,6 +5,8 @@ termina al parar (downloadProgress completed). La parada espera a que no quede n
 import time
 from pathlib import Path
 
+import pytest
+
 from actas.grabador import Grabacion, Sala
 
 
@@ -68,3 +70,98 @@ def test_sin_descargas_no_es_un_exito(tmp_path, monkeypatch):
     g = grabacion(CdpFalso(descargas_al_empezar=False, completar_al_parar=False), tmp_path)
     g.empezar()
     assert g.parar() is False
+
+
+EBML = bytes.fromhex("1a45dfa3")
+
+
+def test_una_descarga_a_medias_se_rescata_antes_de_cerrar_y_no_es_un_exito(tmp_path, monkeypatch):
+    """@a64. Reunión del 2026-10-30: la parada no encontró grabadores y quedaron dos `.crdownload` de 55 min que se
+    ignoraron. Ahora se enlazan a su nombre final (webm válido hasta el último trozo) antes de cerrar las páginas."""
+    monkeypatch.setattr("actas.grabador.ESPERA_DESCARGAS_S", 1)
+    cdp = CdpFalso(descargas_al_empezar=True, completar_al_parar=False)
+    cerradas_con: list[list[str]] = []
+    cdp.cerrar_pagina = lambda t: cerradas_con.append(sorted(p.name for p in (Path(tmp_path) / "r").iterdir()))
+    g = grabacion(cdp, tmp_path)
+    g.empezar()
+    d = Path(tmp_path) / "r"
+    (d / "socioa_1.webm.crdownload").write_bytes(EBML + b"opus")
+    assert g.parar() is False  # puede faltar el final: nunca es un éxito
+    assert g.rescatadas == 1
+    assert sorted(p.name for p in d.iterdir()) == ["socioa_1.webm"]
+    assert (d / "socioa_1.webm").read_bytes() == EBML + b"opus"
+    assert "socioa_1.webm" in cerradas_con[0]  # enlazada antes de cerrar: Chromium no puede borrarla
+
+
+@pytest.mark.parametrize(
+    ("nombre", "contenido"),
+    [
+        ("socioa_1.webm.crdownload", b""),  # vacía
+        ("socioa_1.webm.crdownload", b"no es webm"),
+        ("Unconfirmed 1.crdownload", EBML),  # sin nombre de grabación
+    ],
+)
+def test_lo_que_no_es_un_webm_a_medias_no_se_rescata(tmp_path, monkeypatch, nombre, contenido):
+    monkeypatch.setattr("actas.grabador.ESPERA_DESCARGAS_S", 0)
+    g = grabacion(CdpFalso(descargas_al_empezar=True, completar_al_parar=False), tmp_path)
+    g.empezar()
+    (Path(tmp_path) / "r" / nombre).write_bytes(contenido)
+    assert g.parar() is False
+    assert g.rescatadas == 0
+    assert sorted(p.name for p in (Path(tmp_path) / "r").iterdir()) == [nombre]
+
+
+def test_no_se_pisa_una_pista_que_ya_termino(tmp_path, monkeypatch):
+    monkeypatch.setattr("actas.grabador.ESPERA_DESCARGAS_S", 0)
+    g = grabacion(CdpFalso(descargas_al_empezar=True, completar_al_parar=False), tmp_path)
+    g.empezar()
+    d = Path(tmp_path) / "r"
+    (d / "socioa_1.webm").write_bytes(EBML + b"entera")
+    (d / "socioa_1.webm.crdownload").write_bytes(EBML + b"otra")
+    g.parar()
+    assert g.rescatadas == 0
+    assert (d / "socioa_1.webm").read_bytes() == EBML + b"entera"
+    assert (d / "socioa_1.webm.crdownload").exists()
+
+
+def test_un_enlace_simbolico_no_se_rescata(tmp_path, monkeypatch):
+    monkeypatch.setattr("actas.grabador.ESPERA_DESCARGAS_S", 0)
+    fuera = Path(tmp_path) / "fuera"
+    fuera.write_bytes(EBML)
+    g = grabacion(CdpFalso(descargas_al_empezar=True, completar_al_parar=False), tmp_path)
+    g.empezar()
+    (Path(tmp_path) / "r" / "socioa_1.webm.crdownload").symlink_to(fuera)
+    g.parar()
+    assert g.rescatadas == 0 and not (Path(tmp_path) / "r" / "socioa_1.webm").exists()
+
+
+def test_la_parada_cuenta_tambien_los_grabadores_anotados(tmp_path):
+    from actas.grabador import GRABADORES_JS, HUERFANOS_JS, PARAR_JS
+
+    assert "window.__grabadores" in PARAR_JS and "session.rpcs" in PARAR_JS
+    assert "window.__grabadores" in HUERFANOS_JS and "__huerfano < 2" in HUERFANOS_JS
+    assert "HTMLMediaElement.prototype" in GRABADORES_JS
+
+
+def test_vigilar_cuenta_cero_si_la_pagina_no_responde(tmp_path):
+    lineas: list[str] = []
+    cdp = CdpFalso(descargas_al_empezar=False)
+    g = Grabacion(cdp, Sala("s", "c"), ("socioa",), Path(tmp_path) / "r", lambda *p: lineas.append(" ".join(map(str, p))))
+    g.empezar()
+
+    def falla(*a, **k):
+        raise TimeoutError
+
+    cdp.evaluar = falla
+    assert g.vigilar() == {"socioa": 0}
+    assert lineas[-1] == "socioa vigilar grabadores: TimeoutError"
+
+
+def test_vigilar_anota_los_huerfanos_parados(tmp_path):
+    lineas: list[str] = []
+    cdp = CdpFalso(descargas_al_empezar=False)
+    g = Grabacion(cdp, Sala("s", "c"), ("socioa",), Path(tmp_path) / "r", lambda *p: lineas.append(" ".join(map(str, p))))
+    g.empezar()
+    cdp.evaluar = lambda *a, **k: {"grabando": 0, "parados": 1}
+    assert g.vigilar() == {"socioa": 0}
+    assert lineas[-1] == "socioa grabaciones huérfanas paradas: 1"

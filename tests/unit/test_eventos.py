@@ -67,13 +67,36 @@ def test_enteros_booleanos_nulo_y_codigos(valor):
 
 
 def test_la_lista_blanca_es_la_de_la_migracion():
-    """La misma lista que impone el CHECK de 0005_eventos.sql (los tipos de V3, en la 0006): si una cambia, este test obliga a
-    cambiar la otra."""
+    """Los tipos de 0005_eventos.sql (los de V3, en la 0006) y las claves de la última `evento_detalle_valido` (la 0007): si
+    una lista cambia, este test obliga a cambiar la otra."""
+    import re
     from pathlib import Path
 
-    sql = (Path(__file__).resolve().parents[2] / "migraciones" / "0005_eventos.sql").read_text(encoding="utf-8")
-    for nombre in sorted((TIPOS - {"modificada", "papelera"}) | CLAVES):
+    migraciones = Path(__file__).resolve().parents[2] / "migraciones"
+    sql = (migraciones / "0005_eventos.sql").read_text(encoding="utf-8")
+    for nombre in sorted(TIPOS - {"modificada", "papelera"}):
         assert f"'{nombre}'" in sql, nombre
+    ultima = (migraciones / "0007_grabadores_huerfanos.sql").read_text(encoding="utf-8")
+    lista = re.search(r"e\.clave NOT IN \(([^)]*)\)", ultima)
+    assert lista is not None
+    assert set(re.findall(r"'([a-z_]+)'", lista.group(1))) == CLAVES
+
+
+def test_la_0007_solo_amplia_las_claves_de_la_0005():
+    """La 0007 es la función de la 0005 con tres claves más: el resto (los valores admitidos) no cambia."""
+    import re
+    from pathlib import Path
+
+    migraciones = Path(__file__).resolve().parents[2] / "migraciones"
+
+    def cuerpo(nombre: str) -> str:
+        sql = (migraciones / nombre).read_text(encoding="utf-8")
+        m = re.search(r"FUNCTION evento_detalle_valido\(d jsonb\).*?\);", sql, re.S)
+        assert m is not None
+        return " ".join(m.group(0).split())
+
+    vieja, nueva = cuerpo("0005_eventos.sql"), cuerpo("0007_grabadores_huerfanos.sql")
+    assert nueva == vieja.replace("'resultado')", "'resultado', 'rescatadas', 'perdidas', 'sin_grabar')")
 
 
 def test_los_tipos_son_los_del_ultimo_check_de_la_base():

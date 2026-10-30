@@ -7,21 +7,25 @@
 // ningún par (nadie publicó): no hay grabación que parar. Anuncia por WebSocket falso los streams de ?publican=a,b (lo lee VISTOS_JS).
 const q = new URLSearchParams(location.search);
 const etiqueta = q.get("label"), inicio = Date.now();
-window.session = {
-  desaltStreamID: (s) => s,
-  rpcs: {
-    u1: {videoElement: {recorder: {stop() {
-      setTimeout(() => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob(["opus de " + etiqueta], {type: "audio/webm"}));
-        a.download = `${etiqueta}_${inicio}.webm`;
-        document.body.appendChild(a);
-        a.click();
-      }, Number(q.get("retardo") || 0));
-    }}}},
-  },
-};
+const descargar = () => setTimeout(() => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["opus de " + etiqueta], {type: "audio/webm"}));
+  a.download = `${etiqueta}_${inicio}.webm`;
+  document.body.appendChild(a);
+  a.click();
+}, Number(q.get("retardo") || 0));
+window.session = {desaltStreamID: (s) => s, rpcs: {u1: {videoElement: {recorder: {stop: descargar}}}}};
 if (q.has("sinpar")) window.session.rpcs = {};
+// ?elemento: como recordLocalVideo de VDO.Ninja, un <audio> de verdad recibe `video.recorder = {}` y luego su `stop`, que al
+// parar borra el recorder (delete video.recorder). ?colgado=ms: a los ms el socio cuelga y su par sale de session.rpcs, pero el
+// grabador sigue abierto (srcObject.onended no llega). window.__paradas cuenta las paradas de ese grabador.
+if (q.has("elemento")) {
+  const v = document.createElement("audio");
+  v.recorder = {};
+  v.recorder.stop = () => { window.__paradas = (window.__paradas || 0) + 1; delete v.recorder; descargar(); };
+  window.session.rpcs = {u1: {videoElement: v}};
+  if (q.has("colgado")) setTimeout(() => { delete window.session.rpcs.u1; }, Number(q.get("colgado")));
+}
 window.addEventListener("load", () => {
   const ws = new WebSocket("ws://127.0.0.1:9/");  // nunca conecta; solo para disparar el evento como lo haría la sala
   const lista = (q.get("publican") || "").split(",").filter(Boolean).map((streamID) => ({streamID}));

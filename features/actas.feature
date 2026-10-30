@@ -38,6 +38,25 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Cuando pasa 1 min
     Entonces actas_aviso_sin_coincidencia vale 1
 
+  # Grabadores huérfanos (reuniones del 2026-10-28 y del 2026-10-30): VDO.Ninja no para la grabación de un socio que cuelga.
+
+  Escenario: @a63 el socio que cuelga deja su pista entera
+    Dado una grabación en la que un socio cuelga y su par sale de session.rpcs con el grabador abierto
+    Cuando pasan dos vigilancias, o se pide parar
+    Entonces su grabador se para y su <socio>_<ms>.webm termina de descargarse
+    Y el grabador de un socio que sigue en la sala no se toca
+
+  Escenario: @a64 nada a medias se pierde en silencio
+    Dado una parada tras la que queda un <socio>_<ms>.webm.crdownload con contenido webm
+    Cuando el grabador para
+    Entonces lo enlaza a <socio>_<ms>.webm antes de cerrar las páginas, la reunión se envía y el historial dice cuántas se rescataron
+    Y una descarga a medias que no se puede rescatar consta en el historial como perdida, en rojo
+
+  Escenario: @a65 aviso de un socio que publica sin grabarse
+    Dado una grabación en la que un socio conforme publica en la sala y su página no graba
+    Cuando pasa 1 min
+    Entonces actas_socios_sin_grabar vale 1 y el historial lo dice en rojo
+
   # Panel de F2 (KubernetesInfrastructure#287): python -m actas.panel, detrás de NetBird y BasicAuth.
 
   Escenario: @a22 búsqueda en el panel
