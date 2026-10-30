@@ -1301,3 +1301,77 @@ def test_a53_la_siguiente_usa_la_hora_original_de_la_serie(entorno):
     sup.paso()
     (sig,) = repo.programadas()
     assert sig["programada_para"].astimezone(MADRID).time() == time(6, 15)
+
+
+# ── Drenaje: parar el pod (despliegue, rollout o borrado) sin perder el audio del tmpfs ────────────────────────────────────
+
+
+@pytest.fixture
+def drenaje(entorno, tmp_path_factory):
+    from actas.drenaje import Drenaje
+
+    d = Drenaje(tmp_path_factory.mktemp("marcas"))
+    entorno[0].drenaje = d
+    return d
+
+
+def test_drenando_no_empieza_ninguna_grabacion_y_queda_hecho(entorno, drenaje):
+    sup, repo, _, metricas, *_ = entorno
+    drenaje.pedir()
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    assert GrabacionFalsa.creadas == []
+    assert repo.reunion(rid)["estado"] == "pedida"  # la empieza el pod nuevo
+    assert drenaje.hecho() and metricas.drenaje == 2
+
+
+def test_drenando_la_grabacion_en_curso_sigue_hasta_parar_y_se_envia_antes_de_dar_el_drenaje_por_hecho(entorno, drenaje):
+    sup, repo, plataforma, metricas, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    drenaje.pedir()  # llega el rollout a mitad de la reunión
+    for _ in range(3):
+        reloj.t += 60
+        sup.paso()
+    g = GrabacionFalsa.creadas[0]
+    assert not g.parada and repo.reunion(rid)["estado"] == "grabando"  # un despliegue no corta la reunión
+    assert not drenaje.hecho() and metricas.drenaje == 1 and metricas.grabando == 1
+    repo.pedir_parada()
+    sup.paso()
+    assert g.parada and repo.reunion(rid)["estado"] == "transcribiendo"
+    assert len(plataforma.creaciones) == 1 and drenaje.hecho()
+
+
+def test_drenando_el_tope_tambien_para_y_envia(entorno, drenaje):
+    sup, repo, _, _, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    drenaje.pedir()
+    reloj.t += TOPE_GRABACION_S
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "transcribiendo" and drenaje.hecho()
+
+
+def test_drenando_sin_plataforma_espera_a_que_el_audio_este_enviado(entorno, drenaje):
+    sup, repo, plataforma, _, reloj, raiz = entorno
+    plataforma.respuesta_crear = (503, None)
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    drenaje.pedir()
+    repo.pedir_parada()
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "grabada" and not drenaje.hecho()  # el audio solo está en el tmpfs
+    assert (raiz / rid).is_dir()
+    plataforma.respuesta_crear = (201, {"id": TID})
+    reloj.t += 3600
+    sup.paso()
+    assert repo.reunion(rid)["estado"] == "transcribiendo" and drenaje.hecho()
+
+
+def test_drenando_no_empieza_una_programada_cuya_hora_llega(entorno, drenaje):
+    sup, repo, *_ = entorno
+    rid = _programada(repo)
+    _vence(repo, rid)
+    drenaje.pedir()
+    sup.paso()
+    assert GrabacionFalsa.creadas == [] and repo.reunion(rid)["estado"] == "programada"

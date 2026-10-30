@@ -22,6 +22,7 @@ from pathlib import Path
 
 from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium, version_chromium
+from actas.drenaje import del_entorno as drenaje_del_entorno
 from actas.enlaces import BASE
 from actas.grabador import SALA_RESCATE, Grabacion, Sala, Vigilancia, sala_de_reunion
 from actas.metricas import Metricas, servir
@@ -125,6 +126,8 @@ def main() -> None:
     servir(metricas, int(e.get("ACTAS_PUERTO_METRICAS", "9101")))
     cdp_url = e.get("ACTAS_CDP", "http://127.0.0.1:9222")
     revision = e.get("ACTAS_REVISION", "")
+    drenaje = drenaje_del_entorno(e)
+    drenaje.limpiar()
     sup = Supervisor(
         repo=repo,
         plataforma=Plataforma(e["ACTAS_PLATAFORMA"], token),
@@ -135,6 +138,7 @@ def main() -> None:
         metricas=metricas,
         chromium=lambda: version_chromium(cdp_url),
         imagen=f"sha-{revision}" if revision else "",
+        drenaje=drenaje,
     )
     fin = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: fin.set())
