@@ -22,6 +22,7 @@ class Metricas:
         self.transcritas_total = 0
         self.ultimo_paso_s = 0.0
         self.grabaciones_bytes = 0
+        self.drenaje = 0  # 0: normal; 1: el pod se para y no empieza nada nuevo; 2: todo enviado, ya puede pararse
         self.por_estado: dict[str, int] = {}
 
     def sumar(self, nombre: str, n: int = 1) -> None:
@@ -55,6 +56,9 @@ class Metricas:
                 "# HELP actas_grabaciones_bytes Ocupación del tmpfs de las grabaciones (sizeLimit 768Mi: al llenarse, desalojo).",
                 "# TYPE actas_grabaciones_bytes gauge",
                 f"actas_grabaciones_bytes {self.grabaciones_bytes}",
+                "# HELP actas_drenaje 0 normal; 1 el pod se para (no empieza grabaciones); 2 audio enviado, puede pararse.",
+                "# TYPE actas_drenaje gauge",
+                f"actas_drenaje {self.drenaje}",
                 "# TYPE actas_reuniones gauge",
             ]
             lineas += [f'actas_reuniones{{estado="{e.value}"}} {self.por_estado.get(e.value, 0)}' for e in Estado]

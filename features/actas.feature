@@ -243,3 +243,10 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Cuando sale de «programada» (empieza, no puede empezar o se cancela solo ella)
     Entonces el supervisor crea la siguiente «programada» con la misma sala, tope, espera y socios, y sin conformidades
     Y la mensual va el mismo día o, si el mes no lo tiene, el último
+
+  Escenario: @a61 parar el pod a mitad de una reunión no pierde el audio
+    Dado una reunión «grabando» y un despliegue, un rollout o un borrado del pod
+    Cuando el preStop del supervisor pide el drenaje
+    Entonces no empieza ninguna reunión nueva y la que graba sigue hasta «Parar», el tope o el grabador caído
+    Y el pod no termina hasta que sus pistas están enviadas a la plataforma (o vence el plazo de gracia de 4 h)
+    Y Chromium sigue vivo mientras haya una grabación activa

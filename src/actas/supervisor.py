@@ -36,6 +36,7 @@ import psycopg
 from actas.aviso import sin_coincidencia
 from actas.base import PROGRAMADO, Repositorio
 from actas.conformidad import ConformidadNoValida, validar
+from actas.drenaje import Drenaje
 from actas.estados import TOPE_GRABACION_S, Estado, TransicionNoValida, motivo_parada, nadie_entro
 from actas.grabador import Vigilancia
 from actas.metricas import Metricas
@@ -112,11 +113,13 @@ class Supervisor:
         reloj: Callable[[], float] = time.time,
         chromium: Callable[[], str] | None = None,
         imagen: str = "",
+        drenaje: Drenaje | None = None,
     ) -> None:
-        """`chromium`: la versión del navegador (lanza si no responde); `imagen`: la de este proceso (`sha-<commit>`)."""
+        """`chromium`: la versión del navegador (lanza si no responde); `imagen`: la de este proceso (`sha-<commit>`);
+        `drenaje`: las marcas del preStop (`actas.drenaje`) con las que el pod se para sin perder audio."""
         self.repo, self.plataforma, self.sala_de, self.nueva_grabacion = repo, plataforma, sala_de, nueva_grabacion
         self.raiz, self.log, self.metricas, self.reloj = raiz, registro, metricas, reloj
-        self.chromium, self.imagen = chromium, imagen
+        self.chromium, self.imagen, self.drenaje = chromium, imagen, drenaje
         self.activa: _Activa | None = None
         self.envios: dict[str, _Sondeo] = {}
         self.sondeos: dict[str, _Sondeo] = {}
@@ -155,12 +158,14 @@ class Supervisor:
     # ── Una vuelta ────────────────────────────────────────────────────────────────────────────────────────────────────
 
     def paso(self) -> None:
+        drenando = self._drenando()
         vencidas = self._caducar_programadas()
         if self.activa:
             self._vigilar()
         else:
             self._recuperar_huerfanas()
-            self._atender_siguiente(vencidas)
+            if not drenando:  # el pod se está parando: la siguiente la empieza el pod nuevo
+                self._atender_siguiente(vencidas)
         self._crear_siguientes()
         self._atender_reintentos()
         for r in self.repo.en_estado(Estado.GRABADA):
@@ -173,8 +178,28 @@ class Supervisor:
             self._purgar_actas()
         self.metricas.por_estado = self.repo.cuenta_por_estado()
         self.metricas.grabaciones_bytes, con_audio = self._tmpfs()
+        if drenando:
+            self._comprobar_drenaje()
         self.metricas.ultimo_paso_s = self.reloj()
         self._latir(con_audio)
+
+    def _drenando(self) -> bool:
+        """El preStop del pod (`actas.drenaje`) pidió parar: se sigue grabando y enviando, pero no se empieza nada nuevo."""
+        drenando = self.drenaje is not None and self.drenaje.pedido()
+        if drenando and self.metricas.drenaje == 0:
+            self.metricas.drenaje = 1
+            self.log("el pod se está parando: no se empieza ninguna grabación nueva hasta el pod siguiente")
+        return drenando
+
+    def _comprobar_drenaje(self) -> None:
+        """Hecho cuando no queda grabación activa ni reunión `grabada` sin enviar: lo `transcribiendo` ya está en la
+        plataforma y el pod nuevo lo consulta. Hasta entonces el pod no termina (dentro de su terminationGracePeriodSeconds)."""
+        assert self.drenaje is not None
+        if self.activa or self.repo.en_estado(Estado.GRABADA) or self.metricas.drenaje == 2:
+            return
+        self.drenaje.anotar_hecho()
+        self.metricas.drenaje = 2
+        self.log("drenaje hecho: el audio está enviado y el pod ya puede pararse")
 
     def _a_salvo(self, etapa: Callable[[dict[str, Any]], None], r: dict[str, Any], estado: Estado) -> None:
         """Un fallo inesperado con una reunión (una respuesta con forma rara, un dato que la base no admite) la lleva a
