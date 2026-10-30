@@ -2,7 +2,7 @@
 
 import pytest
 
-from actas.pistas import TOPE_PISTAS, Pista, PistasNoValidas, pistas_de
+from actas.pistas import TOPE_PISTAS, Pista, PistasNoValidas, a_medias, pistas_de
 
 
 def test_una_pista_por_fichero_con_desfase_desde_la_primera():
@@ -86,3 +86,10 @@ def test_cada_rechazo_lleva_su_causa_para_el_historial(ficheros, causa):
     with pytest.raises(PistasNoValidas) as e:
         pistas_de(ficheros, ["sociopablo"])
     assert e.value.causa == causa
+
+
+def test_cuenta_las_descargas_a_medias_sin_su_pista():
+    """@a64. Reunión del 2026-10-28: 4 ficheros y 3 pistas, y nadie supo que faltaba un socio. Lo que no se envía se cuenta."""
+    assert a_medias(["socioa_1.webm", "sociob_2.webm.crdownload", "socioc_3.webm.crdownload", "socioc_3.webm"]) == 1
+    assert a_medias(["socioa_1.webm", ".oculto", "x.json"]) == 0
+    assert a_medias([]) == 0

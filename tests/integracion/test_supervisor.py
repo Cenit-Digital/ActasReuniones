@@ -30,6 +30,9 @@ class GrabacionFalsa:
         self.fallo_al_parar = False
         self.reanudada = False
         self.ver: dict[str, list[str]] = {s: [s] for s in socios}
+        self.grabando: dict[str, int] = {s: 1 for s in socios}
+        self.vigiladas = 0
+        self.rescatadas = 0
         GrabacionFalsa.creadas.append(self)
 
     def empezar(self):
@@ -41,6 +44,10 @@ class GrabacionFalsa:
 
     def vistos(self):
         return self.ver
+
+    def vigilar(self):
+        self.vigiladas += 1
+        return self.grabando
 
     def viva(self):
         return self.viva_
@@ -237,6 +244,112 @@ def test_aviso_sin_coincidencia_al_minuto(entorno):
     reloj.t += 61
     sup.paso()
     assert metricas.aviso_sin_coincidencia == 0
+
+
+def test_un_socio_que_publica_y_no_se_graba_se_avisa_en_el_historial(entorno):
+    """@a65. Grabadores huérfanos: la vigilancia de cada minuto para los huérfanos (vigilar) y avisa si un socio que publica en la
+    sala no tiene ningún grabador, con su evento (el panel lo pinta en rojo) y su métrica."""
+    sup, repo, _, metricas, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+    g.grabando = {"socioa": 1, "sociob": 0}
+    reloj.t += 61
+    sup.paso()
+    assert g.vigiladas == 1
+    assert metricas.socios_sin_grabar == 1
+    assert repo.eventos(rid)[-1]["detalle"] == {"faltan": 0, "sin_grabar": 1}
+    reloj.t += 61
+    sup.paso()  # sin cambios: no se repite el evento
+    assert [e["tipo"] for e in repo.eventos(rid)].count("aviso") == 1
+    g.grabando = {"socioa": 1, "sociob": 1}
+    reloj.t += 61
+    sup.paso()
+    assert metricas.socios_sin_grabar == 0
+    assert repo.eventos(rid)[-1]["detalle"] == {"faltan": 0, "sin_grabar": 0}
+    repo.pedir_parada()
+    sup.paso()
+    assert metricas.socios_sin_grabar == 0
+
+
+def test_un_socio_que_no_publica_no_cuenta_como_sin_grabar(entorno):
+    sup, repo, _, metricas, reloj, _ = entorno
+    rid = repo.pedir(Peticion(("socioa",), "v1"))
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+    g.ver, g.grabando = {"socioa": []}, {"socioa": 0}
+    reloj.t += 61
+    sup.paso()
+    assert metricas.socios_sin_grabar == 0
+    assert repo.eventos(rid)[-1]["detalle"] == {"faltan": 1}
+
+
+def test_lo_rescatado_al_parar_queda_en_el_historial_y_se_envia(entorno):
+    """@a64. Reunión del 2026-10-30: con las descargas rescatadas, la reunión se envía en vez de acabar en `error: pistas`."""
+    sup, repo, plataforma, _, _, raiz = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+
+    def parar():
+        for s in g.socios:
+            (raiz / rid / f"{s}_1000.webm").write_bytes(b"opus")
+        g.rescatadas = 2
+        return False
+
+    g.parar = parar
+    repo.pedir_parada()
+    sup.paso()
+    estados = [e["detalle"] for e in repo.eventos(rid) if e["tipo"] == "estado"]
+    assert {"desde": "grabando", "hasta": "grabada", "motivo": "pedida", "completas": False, "rescatadas": 2} in estados
+    assert repo.reunion(rid)["estado"] == "transcribiendo" and len(plataforma.creaciones) == 1
+
+
+def test_una_descarga_a_medias_que_no_se_envia_queda_en_el_historial(entorno):
+    """@a64. Reunión del 2026-10-28: una pista se quedó en `.crdownload` y se envió el resto sin decir nada. Ahora se dice."""
+    sup, repo, plataforma, _, _, raiz = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+
+    def parar():
+        (raiz / rid / "socioa_1000.webm").write_bytes(b"opus")
+        (raiz / rid / "sociob_1500.webm.crdownload").write_bytes(b"sin cabecera")
+        return False
+
+    g.parar = parar
+    repo.pedir_parada()
+    sup.paso()
+    estados = [e["detalle"] for e in repo.eventos(rid) if e["tipo"] == "estado"]
+    assert {"desde": "grabada", "hasta": "transcribiendo", "pistas": 1, "perdidas": 1} in estados
+    ((_, pistas, _),) = plataforma.creaciones
+    assert [p.socio for p in pistas] == ["socioa"]
+
+
+def test_sin_ninguna_pista_el_error_dice_cuantas_quedaron_a_medias(entorno):
+    """@a64. La reunión del 2026-10-30 tal como acabó: solo `.crdownload` que no se pudieron rescatar."""
+    sup, repo, plataforma, _, _, raiz = entorno
+    rid = repo.pedir(Peticion(("socioa", "sociob"), "v1"))
+    sup.paso()
+    g = GrabacionFalsa.creadas[0]
+
+    def parar():
+        for s in g.socios:
+            (raiz / rid / f"{s}_1000.webm.crdownload").write_bytes(b"x")
+        return False
+
+    g.parar = parar
+    repo.pedir_parada()
+    sup.paso()
+    assert repo.eventos(rid)[-1]["detalle"] == {
+        "desde": "grabada",
+        "hasta": "error",
+        "motivo": "pistas",
+        "causa": "ninguna_pista",
+        "ficheros": 2,
+        "perdidas": 2,
+    }
+    assert plataforma.creaciones == []
 
 
 def test_purga_de_audio_viejo_y_huerfano(entorno):

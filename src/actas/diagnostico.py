@@ -249,10 +249,17 @@ def linea_evento(tipo: str, d: Mapping[str, Any]) -> tuple[str, str]:
         intento = f" · intento {int(d['intento']) + 1}" if isinstance(d.get("intento"), int) else ""
         return f"{que} {_http(d.get('codigo'))}, se reintenta{intento}", "aviso"
     if tipo == "aviso":
-        n = d.get("faltan") or 0
-        if not n:
-            return "Ya publican todos los socios conformes", "ok"
-        return (f"{n} socio conforme no publica" if n == 1 else f"{n} socios conformes no publican") + " en la sala", "aviso"
+        n, sin = d.get("faltan") or 0, d.get("sin_grabar") or 0
+        partes = []
+        if n:
+            partes.append((f"{n} socio conforme no publica" if n == 1 else f"{n} socios conformes no publican") + " en la sala")
+        if sin:
+            partes.append(f"{sin} socio publica pero no se graba" if sin == 1 else f"{sin} socios publican pero no se graban")
+        if partes:
+            return " · ".join(partes), "error" if sin else "aviso"
+        if "sin_grabar" in d:
+            return "Ya se graba a todos los socios que publican", "ok"
+        return "Ya publican todos los socios conformes", "ok"
     if tipo == "audio_borrado":
         return f"Audio borrado ({d.get('motivo')}) · {d.get('ficheros')} ficheros", "info"
     if tipo == "modificada":
@@ -286,11 +293,21 @@ def _linea_estado(d: Mapping[str, Any]) -> tuple[str, str]:
         return texto + (", con las siguientes de la serie" if d.get("accion") == "serie" else ""), "info"
     if desde == "grabando" and hasta == "grabada":
         texto = _PARADAS.get(str(motivo), f"Grabación parada ({motivo})")
+        if d.get("rescatadas"):
+            n = d["rescatadas"]
+            rescate = "1 pista rescatada a medias" if n == 1 else f"{n} pistas rescatadas a medias"
+            return f"{texto} · {rescate} (puede faltar el final)", "aviso"
         if d.get("completas") is False:
             return texto + " · alguna descarga no terminó", "aviso"
         return texto, "ok" if motivo in ("pedida", None) else "aviso"
     if hasta == "transcribiendo":
-        return f"Enviada a transcribir · {d.get('pistas')} pistas" if d.get("pistas") else "Enviada a transcribir", "ok"
+        texto = f"Enviada a transcribir · {d.get('pistas')} pistas" if d.get("pistas") else "Enviada a transcribir"
+        if d.get("perdidas"):
+            n = d["perdidas"]
+            return texto + (
+                " · 1 descarga a medias no se envía" if n == 1 else f" · {n} descargas a medias no se envían"
+            ), "error"
+        return texto, "ok"
     if hasta == "transcrita":
         return f"Transcrita · {d.get('segmentos')} segmentos" if d.get("segmentos") is not None else "Transcrita", "ok"
     if hasta == "error":
@@ -298,6 +315,9 @@ def _linea_estado(d: Mapping[str, Any]) -> tuple[str, str]:
         texto = f"Pasó a error ({motivo})"
         if causa:
             texto += " · " + _CAUSAS_PISTAS.get(str(causa), str(causa)).rstrip(".").lower()
+        if d.get("perdidas"):
+            n = d["perdidas"]
+            texto += " · 1 descarga a medias sin rescatar" if n == 1 else f" · {n} descargas a medias sin rescatar"
         return texto, "error"
     if desde == "error" and hasta == "grabada":
         return "Se vuelve a enviar (reintento)", "ok"

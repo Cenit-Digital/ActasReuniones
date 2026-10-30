@@ -16,6 +16,7 @@ class Metricas:
         self.grabando = 0
         self.socios_esperados = 0
         self.socios_vistos = 0
+        self.socios_sin_grabar = 0
         self.errores_total = 0
         self.tope_total = 0
         self.transcritas_total = 0
@@ -39,6 +40,9 @@ class Metricas:
                 f"actas_socios_esperados {self.socios_esperados}",
                 "# TYPE actas_socios_vistos gauge",
                 f"actas_socios_vistos {self.socios_vistos}",
+                "# HELP actas_socios_sin_grabar Socios conformes que publican en la sala pero cuya página no graba.",
+                "# TYPE actas_socios_sin_grabar gauge",
+                f"actas_socios_sin_grabar {self.socios_sin_grabar}",
                 "# TYPE actas_errores_total counter",
                 f"actas_errores_total {self.errores_total}",
                 "# TYPE actas_tope_total counter",

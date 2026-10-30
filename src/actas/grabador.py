@@ -4,9 +4,16 @@ Cada página entra con `&scene&view=<id>&label=<id>&autorecordremote=-64&novideo
 graba solo audio (Opus) en cuanto llega el par y lo descarga como `<id>_<ms>.webm` en el directorio de la reunión, que es un
 tmpfs compartido con el contenedor `chromium`. La parada es siempre ordenada (`recorder.stop()` y esperar la descarga): una
 parada brusca deja un `.crdownload` parcial.
+
+Un socio que cuelga deja su grabador huérfano (reunión del 2026-10-30): VDO.Ninja quita su par de `session.rpcs` y solo para la
+grabación con `srcObject.onended`, que un MediaStream remoto de Chrome no dispara; la descarga se queda abierta. Por eso cada
+página anota en `window.__grabadores` cada elemento al que VDO.Ninja da un `recorder` (GRABADORES_JS), la vigilancia para los
+que llevan dos vueltas sin par (HUERFANOS_JS) y la parada para todos los anotados. Lo que aun así quede a medias se rescata al
+parar: el `.crdownload` de StreamSaver es un webm válido hasta el último trozo escrito.
 """
 
 import json
+import os
 import time
 import urllib.parse
 from collections.abc import Callable, Mapping
@@ -21,6 +28,8 @@ from actas.registro import Registro
 from actas.salas import ClaveNoValida, SalaNoDisponible, descifrar
 
 ESPERA_DESCARGAS_S = 45
+EBML = bytes.fromhex("1a45dfa3")  # la cabecera de todo webm (Matroska)
+A_MEDIAS = ".crdownload"
 
 # Anota los streamIDs que anuncia la sala (lista al entrar y videoaddedtoroom después) para el aviso del grabador.
 VISTOS_JS = """(() => {
@@ -49,14 +58,61 @@ VISTOS_JS = """(() => {
 VISTOS_SIN_SAL_JS = """JSON.stringify((typeof session === 'undefined' || !session.desaltStreamID) ? [] :
   [...new Set((window.__vistos || []).map(s => session.desaltStreamID(s)).filter(s => typeof s === 'string'))])"""
 
-PARAR_JS = """(() => {
+# Anota cada elemento al que VDO.Ninja da un `recorder` (recordLocalVideo hace `video.recorder = {}`). Sin tocar nada más: tras
+# la primera asignación el elemento tiene su propia propiedad, así que `delete video.recorder` y una grabación nueva (que vuelve
+# a pasar por el setter) se comportan como sin el script.
+GRABADORES_JS = """(() => {
+  window.__grabadores = window.__grabadores || new Set();
+  Object.defineProperty(HTMLMediaElement.prototype, 'recorder', {
+    configurable: true,
+    get() { return undefined; },
+    set(valor) {
+      window.__grabadores.add(this);
+      Object.defineProperty(this, 'recorder', {value: valor, writable: true, configurable: true, enumerable: true});
+    },
+  });
+})()"""
+
+# Los elementos que se graban: los anotados y, para las páginas retomadas sin el script, los de session.rpcs.
+_GRABADOS_JS = """const grabados = () => {
+    const vs = new Set(window.__grabadores || []);
+    const rpcs = (typeof session === 'undefined' || !session.rpcs) ? {} : session.rpcs;
+    for (const u in rpcs) { const v = rpcs[u] && rpcs[u].videoElement; if (v) vs.add(v); }
+    return vs;
+  };
+  const activo = (v) => v.recorder && v.recorder.stop && !v.recorder.closing;"""
+
+PARAR_JS = (
+    """(() => {
+  """
+    + _GRABADOS_JS
+    + """
   let n = 0;
-  for (const uuid in session.rpcs) {
-    const v = session.rpcs[uuid] && session.rpcs[uuid].videoElement;
-    if (v && v.recorder && v.recorder.stop) { try { v.recorder.stop(); n++; } catch (e) {} }
-  }
+  for (const v of grabados()) { if (activo(v)) { try { v.recorder.stop(); n++; } catch (e) {} } }
   return n;
 })()"""
+)
+
+# Para el grabador que lleva dos vigilancias sin par en session.rpcs (el socio colgó): así su descarga termina entera. Si el
+# socio vuelve, VDO.Ninja graba en otro `<id>_<ms>.webm`. Devuelve cuántos siguen grabando y cuántos se pararon.
+HUERFANOS_JS = (
+    """(() => {
+  """
+    + _GRABADOS_JS
+    + """
+  const rpcs = (typeof session === 'undefined' || !session.rpcs) ? {} : session.rpcs;
+  const conPar = new Set(Object.values(rpcs).map(r => r && r.videoElement).filter(Boolean));
+  let grabando = 0, parados = 0;
+  for (const v of grabados()) {
+    if (!activo(v)) continue;
+    if (conPar.has(v)) { v.__huerfano = 0; grabando++; continue; }
+    v.__huerfano = (v.__huerfano || 0) + 1;
+    if (v.__huerfano < 2) { grabando++; continue; }
+    try { v.recorder.stop(); parados++; } catch (e) {}
+  }
+  return {grabando, parados};
+})()"""
+)
 
 
 @dataclass(frozen=True)
@@ -118,6 +174,7 @@ class Grabacion:
     registro: Registro
     paginas: dict[str, tuple[str, str]] = field(default_factory=dict)
     descargas: dict[str, str] = field(default_factory=dict)
+    rescatadas: int = 0  # descargas a medias que la última parada rescató
 
     def _descargar_aqui(self) -> None:
         self.destino.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -132,7 +189,7 @@ class Grabacion:
         self._descargar_aqui()
         try:
             for s in self.socios:
-                self.paginas[s] = self.cdp.pagina(self.sala.url(s), antes=(VISTOS_JS,), nombre=s)
+                self.paginas[s] = self.cdp.pagina(self.sala.url(s), antes=(VISTOS_JS, GRABADORES_JS), nombre=s)
                 self.registro("espectador de", s)
         except Exception:
             self._cerrar()
@@ -174,6 +231,21 @@ class Grabacion:
                 salida[s] = []
         return salida
 
+    def vigilar(self) -> dict[str, int]:
+        """Cuántos grabadores siguen grabando en cada página, tras parar los huérfanos (HUERFANOS_JS). Una página que no
+        responde cuenta como que no graba nada."""
+        salida = {}
+        for s, (_, ses) in self.paginas.items():
+            try:
+                r = self.cdp.evaluar(ses, HUERFANOS_JS, espera=10) or {}
+                salida[s] = int(r.get("grabando", 0))
+                if r.get("parados"):
+                    self.registro(s, "grabaciones huérfanas paradas:", int(r["parados"]))
+            except Exception as e:  # noqa: BLE001
+                self.registro(s, "vigilar grabadores:", type(e).__name__)
+                salida[s] = 0
+        return salida
+
     def parar(self) -> bool:
         """Parada ordenada. True solo si hubo grabaciones y todas sus descargas terminaron (`completed`).
 
@@ -191,8 +263,44 @@ class Grabacion:
         limite = time.monotonic() + ESPERA_DESCARGAS_S
         while time.monotonic() < limite and (len(self.descargas) < paradas or "empezada" in self.descargas.values()):
             time.sleep(0.5)
+        rescatadas = self._rescatar()
         self._cerrar()
+        self._quitar_a_medias(rescatadas)
+        self.rescatadas = len(rescatadas)
         return bool(self.descargas) and len(self.descargas) >= paradas and all(v == "completed" for v in self.descargas.values())
+
+    def _rescatar(self) -> list[Path]:
+        """Las descargas a medias (`<x>.webm.crdownload`) con contenido webm y sin su `<x>.webm`, enlazadas a ese nombre."""
+        rescatadas: list[Path] = []
+        try:
+            candidatas = sorted(self.destino.glob("*.webm" + A_MEDIAS))
+        except OSError:
+            return rescatadas
+        for p in candidatas:
+            final = p.with_name(p.name.removesuffix(A_MEDIAS))
+            try:
+                if p.is_symlink() or not p.is_file() or final.exists() or final.is_symlink():
+                    continue
+                with p.open("rb") as f:
+                    if f.read(len(EBML)) != EBML:
+                        continue
+                os.link(p, final)
+                rescatadas.append(final)
+            except OSError as e:
+                self.registro("no se pudo rescatar una descarga a medias:", type(e).__name__)
+        if rescatadas:
+            self.registro("descargas a medias rescatadas:", len(rescatadas))
+        return rescatadas
+
+    def _quitar_a_medias(self, rescatadas: list[Path]) -> None:
+        """Quita el nombre `.crdownload` de lo rescatado (si sigue siendo el mismo fichero): así no cuenta como perdido."""
+        for final in rescatadas:
+            a_medias = final.with_name(final.name + A_MEDIAS)
+            try:
+                if a_medias.exists() and os.path.samefile(a_medias, final):
+                    a_medias.unlink()
+            except OSError as e:
+                self.registro("no se pudo quitar una descarga rescatada:", type(e).__name__)
 
     def _cerrar(self) -> None:
         """Cierra las páginas y deja de aceptar descargas: fuera de una grabación, nada escribe en /grabaciones."""

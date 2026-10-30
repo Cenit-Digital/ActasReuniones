@@ -94,6 +94,66 @@ def test_reanudar_y_parar_las_paginas_de_un_supervisor_anterior(chromium, sala_f
     cdp2.cerrar()
 
 
+def test_el_grabador_de_un_socio_que_colgo_se_para_igual_y_su_descarga_termina(chromium, sala_falsa, tmp_path):
+    """@a63. Reunión del 2026-10-30: los socios colgaron 9 s antes de «Parar», su par salió de session.rpcs y la
+    parada no encontró ningún grabador («grabaciones paradas: 0»): solo quedaron dos `.crdownload`. Con GRABADORES_JS
+    la parada los encuentra."""
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&colgado=300&retardo=300&")
+    cdp = Cdp(chromium, Registro())
+    g = Grabacion(cdp, sala, ("socioa", "sociob"), tmp_path / "r", lambda *p: None)
+    g.empezar()
+    time.sleep(1.5)  # ya colgaron
+    assert g.parar() is True
+    ficheros = sorted(p.name for p in (tmp_path / "r").iterdir())
+    assert [p.socio for p in pistas_de(ficheros, ["socioa", "sociob"])] == ["socioa", "sociob"]
+    cdp.cerrar()
+
+
+def test_vigilar_para_el_grabador_huerfano_a_la_segunda_vuelta_y_nunca_el_vigente(chromium, sala_falsa, tmp_path):
+    """@a63. El socio que cuelga a mitad de reunión (la del 2026-10-28 perdió así a uno): su grabador se para a la
+    segunda vigilancia sin par, y su pista queda entera aunque la reunión siga. El de un socio que sigue en la sala no se toca."""
+    colgado = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&colgado=300&")
+    vigente = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&")
+    cdp = Cdp(chromium, Registro())
+    lineas: list[str] = []
+    g = Grabacion(cdp, colgado, ("socioa",), tmp_path / "r", lambda *p: lineas.append(" ".join(map(str, p))))
+    g.empezar()
+    h = Grabacion(cdp, vigente, ("sociob",), tmp_path / "s", lambda *p: None)
+    h.empezar()
+    time.sleep(1.5)
+    paradas = "(window.__paradas || 0)"
+    assert g.vigilar() == {"socioa": 1}  # primera vuelta sin par: aún no
+    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 0
+    assert g.vigilar() == {"socioa": 0}  # segunda: se para
+    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 1
+    assert any("huérfanas paradas: 1" in linea for linea in lineas)
+    assert g.vigilar() == {"socioa": 0}  # ya parado: no se para dos veces
+    assert cdp.evaluar(g.paginas["socioa"][1], paradas) == 1
+    for _ in range(3):
+        assert h.vigilar() == {"sociob": 1}
+    assert cdp.evaluar(h.paginas["sociob"][1], paradas) == 0
+    assert h.parar() is True and g.parar() is True
+    assert [p.name.split("_")[0] for p in (tmp_path / "r").iterdir()] == ["socioa"]
+    cdp.cerrar()
+
+
+def test_la_pagina_sigue_viendo_el_recorder_como_vdo_ninja(chromium, sala_falsa, tmp_path):
+    """GRABADORES_JS no cambia lo que VDO.Ninja lee: tras `delete video.recorder` el elemento ya no graba, y una grabación
+    nueva vuelve a quedar anotada."""
+    sala = Sala("salaprueba", "clave", base=sala_falsa + "?elemento&")
+    cdp = Cdp(chromium, Registro())
+    g = Grabacion(cdp, sala, ("socioa",), tmp_path / "r", lambda *p: None)
+    g.empezar()
+    time.sleep(1)
+    ses = g.paginas["socioa"][1]
+    js = """(() => { const v = session.rpcs.u1.videoElement; const antes = typeof v.recorder.stop;
+      v.recorder.stop(); const tras = v.recorder; v.recorder = {stop() {}}; const otra = typeof v.recorder.stop;
+      return [antes, tras === undefined, otra, window.__grabadores.size, Object.keys(v).includes('recorder')]; })()"""
+    assert cdp.evaluar(ses, js) == ["function", True, "function", 1, True]
+    g.parar()
+    cdp.cerrar()
+
+
 def test_url_de_la_pagina_espectadora():
     url = Sala("sala", "clave é&x", salt="reuniones.cenitdigital.es").url("sociopablo")
     assert url.startswith(

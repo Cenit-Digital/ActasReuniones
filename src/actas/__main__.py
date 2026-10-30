@@ -62,6 +62,14 @@ class _GrabacionConCdp:
         assert self._g is not None
         return self._g.vistos()
 
+    def vigilar(self) -> dict[str, int]:
+        assert self._g is not None
+        return self._g.vigilar()
+
+    @property
+    def rescatadas(self) -> int:
+        return self._g.rescatadas if self._g is not None else 0
+
     def viva(self) -> bool:
         return self._g is not None and self._g.cdp.vivo
 
