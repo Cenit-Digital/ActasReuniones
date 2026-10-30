@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from actas.grabador import Grabacion, Sala
+from actas.grabador import Grabacion, Sala, Vigilancia
 
 
 class CdpFalso:
@@ -135,12 +135,12 @@ def test_un_enlace_simbolico_no_se_rescata(tmp_path, monkeypatch):
     assert g.rescatadas == 0 and not (Path(tmp_path) / "r" / "socioa_1.webm").exists()
 
 
-def test_la_parada_cuenta_tambien_los_grabadores_anotados(tmp_path):
-    from actas.grabador import GRABADORES_JS, HUERFANOS_JS, PARAR_JS
-
-    assert "window.__grabadores" in PARAR_JS and "session.rpcs" in PARAR_JS
-    assert "window.__grabadores" in HUERFANOS_JS and "__huerfano < 2" in HUERFANOS_JS
-    assert "HTMLMediaElement.prototype" in GRABADORES_JS
+def test_vigilar_dice_si_el_socio_esta_conectado(tmp_path):
+    cdp = CdpFalso(descargas_al_empezar=False)
+    g = Grabacion(cdp, Sala("s", "c"), ("socioa",), Path(tmp_path) / "r", lambda *p: None)
+    g.empezar()
+    cdp.evaluar = lambda *a, **k: {"grabando": 0, "parados": 0, "pares": 1}
+    assert g.vigilar() == {"socioa": Vigilancia(0, True)}
 
 
 def test_vigilar_cuenta_cero_si_la_pagina_no_responde(tmp_path):
@@ -153,7 +153,7 @@ def test_vigilar_cuenta_cero_si_la_pagina_no_responde(tmp_path):
         raise TimeoutError
 
     cdp.evaluar = falla
-    assert g.vigilar() == {"socioa": 0}
+    assert g.vigilar() == {"socioa": Vigilancia(0, False)}
     assert lineas[-1] == "socioa vigilar grabadores: TimeoutError"
 
 
@@ -162,6 +162,6 @@ def test_vigilar_anota_los_huerfanos_parados(tmp_path):
     cdp = CdpFalso(descargas_al_empezar=False)
     g = Grabacion(cdp, Sala("s", "c"), ("socioa",), Path(tmp_path) / "r", lambda *p: lineas.append(" ".join(map(str, p))))
     g.empezar()
-    cdp.evaluar = lambda *a, **k: {"grabando": 0, "parados": 1}
-    assert g.vigilar() == {"socioa": 0}
+    cdp.evaluar = lambda *a, **k: {"grabando": 0, "parados": 1, "pares": 0}
+    assert g.vigilar() == {"socioa": Vigilancia(0, False)}
     assert lineas[-1] == "socioa grabaciones huérfanas paradas: 1"
