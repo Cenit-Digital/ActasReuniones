@@ -250,3 +250,4 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Entonces no empieza ninguna reunión nueva y la que graba sigue hasta «Parar», el tope o el grabador caído
     Y el pod no termina hasta que sus pistas están enviadas a la plataforma (o vence el plazo de gracia de 4 h)
     Y Chromium sigue vivo mientras haya una grabación activa
+    Y si el pod nuevo nace antes (kubectl delete pod), su supervisor espera a que salga el viejo: nunca dos grabadores

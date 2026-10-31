@@ -20,6 +20,8 @@ import threading
 from collections.abc import Mapping
 from pathlib import Path
 
+import psycopg
+
 from actas.base import Repositorio
 from actas.cdp import Cdp, esperar_chromium, version_chromium
 from actas.drenaje import del_entorno as drenaje_del_entorno
@@ -30,6 +32,7 @@ from actas.plataforma import Plataforma
 from actas.registro import Registro
 from actas.salas import clave_maestra
 from actas.supervisor import Supervisor
+from actas.turno import esperar_turno
 
 VUELTA_S = 5
 
@@ -143,6 +146,11 @@ def main() -> None:
     fin = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: fin.set())
     signal.signal(signal.SIGINT, lambda *_: fin.set())
+    # Un solo supervisor a la vez: si el de un pod que drena sigue vivo, se espera a que termine (actas.turno).
+    candado = esperar_turno(lambda: psycopg.connect(e["ACTAS_DSN"], autocommit=True), drenaje, metricas, registro, fin)
+    if candado is None:
+        registro("supervisor parado sin llegar a empezar")
+        return
     # Antes de atender nada: Chromium tiene que responder para rescatar la grabación en curso y cerrar lo que sobre (si no
     # responde en 5 min, el proceso sale y el contenedor se reinicia; avisa ActasSupervisorParado).
     esperar_chromium(cdp_url)
@@ -156,6 +164,7 @@ def main() -> None:
             registro("vuelta fallida:", type(ex).__name__)
         fin.wait(VUELTA_S)
     sup.terminar()
+    candado.close()
     registro("supervisor parado")
 
 
