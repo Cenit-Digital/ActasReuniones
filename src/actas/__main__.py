@@ -32,9 +32,10 @@ from actas.plataforma import Plataforma
 from actas.registro import Registro
 from actas.salas import clave_maestra
 from actas.supervisor import Supervisor
-from actas.turno import esperar_turno
+from actas.turno import Turno, esperar_turno
 
 VUELTA_S = 5
+PLAZO_SALIDA_S = 120  # tras el SIGTERM: una parada de emergencia (5 s por página + 45 s de descargas) cabe de sobra
 
 
 class _GrabacionConCdp:
@@ -144,13 +145,23 @@ def main() -> None:
         drenaje=drenaje,
     )
     fin = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: fin.set())
-    signal.signal(signal.SIGINT, lambda *_: fin.set())
+
+    def al_terminar(*_: object) -> None:
+        # El preStop ya drenó (actas.drenaje); si el bucle está colgado y no sale, que no retenga el pod hasta el plazo de 4 h.
+        fin.set()
+        salida = threading.Timer(PLAZO_SALIDA_S, lambda: os._exit(1))
+        salida.daemon = True  # una salida normal no lo espera
+        salida.start()
+
+    signal.signal(signal.SIGTERM, al_terminar)
+    signal.signal(signal.SIGINT, al_terminar)
     # Un solo supervisor a la vez: si el de un pod que drena sigue vivo, se espera a que termine (actas.turno).
-    candado = esperar_turno(lambda: psycopg.connect(e["ACTAS_DSN"], autocommit=True), drenaje, metricas, registro, fin)
+    conectar = lambda: psycopg.connect(e["ACTAS_DSN"], autocommit=True)  # noqa: E731
+    candado = esperar_turno(conectar, drenaje, metricas, registro, fin)
     if candado is None:
         registro("supervisor parado sin llegar a empezar")
         return
+    turno = Turno(conectar, candado, registro)
     # Antes de atender nada: Chromium tiene que responder para rescatar la grabación en curso y cerrar lo que sobre (si no
     # responde en 5 min, el proceso sale y el contenedor se reinicia; avisa ActasSupervisorParado).
     esperar_chromium(cdp_url)
@@ -159,12 +170,16 @@ def main() -> None:
     registro("supervisor en marcha")
     while not fin.is_set():
         try:
+            if not turno.conservar():
+                drenaje.pedir()  # otro supervisor tiene el candado: nada nuevo, y fuera en cuanto esté todo enviado
+            if drenaje.hecho():
+                break
             sup.paso()
         except Exception as ex:  # noqa: BLE001 — la base o la plataforma caídas un momento no paran el supervisor
             registro("vuelta fallida:", type(ex).__name__)
         fin.wait(VUELTA_S)
     sup.terminar()
-    candado.close()
+    turno.soltar()
     registro("supervisor parado")
 
 

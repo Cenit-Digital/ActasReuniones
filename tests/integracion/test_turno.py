@@ -74,3 +74,45 @@ def test_sigterm_mientras_espera_sale_sin_el_candado(dsn, tmp_path):
         assert esperar_turno(_conectar(dsn), Drenaje(tmp_path), Metricas(), Registro(), FinTrasVueltas(2), clave=CLAVE) is None
     finally:
         viejo.close()
+
+
+def test_conservar_con_la_conexion_viva_no_hace_nada(dsn, tmp_path):
+    from actas.turno import Turno
+
+    conectar = _conectar(dsn)
+    c = esperar_turno(conectar, Drenaje(tmp_path), Metricas(), Registro(), FinTrasVueltas(1), clave=CLAVE)
+    t = Turno(conectar, c, Registro(), clave=CLAVE)
+    assert t.conservar() and t.conservar()
+    t.soltar()
+
+
+def test_si_se_cae_la_conexion_del_candado_lo_vuelve_a_tomar(dsn, tmp_path):
+    from actas.turno import Turno
+
+    conectar = _conectar(dsn)
+    c = esperar_turno(conectar, Drenaje(tmp_path), Metricas(), Registro(), FinTrasVueltas(1), clave=CLAVE)
+    t = Turno(conectar, c, Registro(), clave=CLAVE)
+    c.close()  # un reinicio de PostgreSQL o un corte: la base suelta el candado
+    assert t.conservar()
+    otro = conectar()
+    try:
+        assert not otro.execute("SELECT pg_try_advisory_lock(%s)", (CLAVE,)).fetchone()[0]  # lo tiene otra vez este
+    finally:
+        otro.close()
+        t.soltar()
+
+
+def test_si_otro_tomo_el_candado_mientras_estaba_caido_lo_da_por_perdido(dsn, tmp_path):
+    from actas.turno import Turno
+
+    conectar = _conectar(dsn)
+    c = esperar_turno(conectar, Drenaje(tmp_path), Metricas(), Registro(), FinTrasVueltas(1), clave=CLAVE)
+    t = Turno(conectar, c, Registro(), clave=CLAVE)
+    c.close()
+    otro = conectar()
+    otro.execute("SELECT pg_advisory_lock(%s)", (CLAVE,))  # el supervisor de otro pod se adelantó
+    try:
+        assert not t.conservar() and not t.conservar() and t.perdido  # drena y sale; no lo reintenta en cada vuelta
+    finally:
+        otro.close()
+        t.soltar()

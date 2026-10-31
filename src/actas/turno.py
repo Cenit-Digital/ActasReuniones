@@ -7,8 +7,9 @@ grabando mientras drena (la pasaría a `grabada` sin pistas en su tmpfs) y empez
 
 El supervisor toma el candado antes de tocar nada y lo conserva con su propia conexión mientras vive; al salir el proceso, la
 base lo suelta. Esperando, sigue vivo para las sondas (`ultimo_paso_s`) y, si su propio pod empieza a pararse, da el drenaje
-por hecho: no tiene nada que drenar. Si la conexión del candado se cayera (un reinicio de la base), otro supervisor que
-esperase podría tomarlo; con un solo pod eso solo pasa a la vez que un drenaje.
+por hecho: no tiene nada que drenar. La base suelta el candado si se cae su conexión (un reinicio de PostgreSQL, un corte):
+`conservar()`, en cada vuelta, lo comprueba y lo vuelve a tomar; si otro supervisor lo tiene ya, este deja de empezar
+grabaciones (drena) y sale en cuanto no tiene nada que enviar.
 """
 
 import threading
@@ -53,3 +54,38 @@ def esperar_turno(
     if avisado:
         registro("el supervisor anterior terminó: este toma el relevo")
     return c
+
+
+class Turno:
+    """El candado del supervisor en marcha: hay que conservarlo (y comprobarlo) mientras viva el proceso."""
+
+    def __init__(
+        self, conectar: Callable[[], psycopg.Connection[Any]], c: psycopg.Connection[Any], registro: Registro, clave: int = CLAVE
+    ) -> None:
+        self._conectar, self._c, self.log, self._clave = conectar, c, registro, clave
+        self.perdido = False
+
+    def conservar(self) -> bool:
+        """True si este proceso sigue teniendo el candado. Si su conexión se cayó, reconecta y lo vuelve a pedir; perdido una
+        vez, no se reintenta: el proceso drena y sale, y al arrancar de nuevo espera su turno."""
+        if self.perdido:
+            return False
+        try:
+            self._c.execute("SELECT 1")
+            return True
+        except psycopg.Error:
+            pass
+        try:
+            self._c.close()
+            self._c = self._conectar()
+            if self._c.execute("SELECT pg_try_advisory_lock(%s)", (self._clave,)).fetchone()[0]:  # type: ignore[index]
+                self.log("candado del supervisor recuperado tras perder su conexión")
+                return True
+        except psycopg.Error:
+            return True  # la base sigue caída: se reintenta en la vuelta siguiente
+        self.perdido = True
+        self.log("AVISO: otro supervisor tiene el candado: este no empieza nada nuevo y sale al acabar lo suyo")
+        return False
+
+    def soltar(self) -> None:
+        self._c.close()
