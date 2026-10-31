@@ -35,7 +35,7 @@ from actas.supervisor import Supervisor
 from actas.turno import Turno, esperar_turno
 
 VUELTA_S = 5
-PLAZO_SALIDA_S = 120  # tras el SIGTERM: una parada de emergencia (5 s por página + 45 s de descargas) cabe de sobra
+PLAZO_SALIDA_S = 120  # tras el SIGTERM, si el bucle sigue colgado; lo mismo que el plazo de las sondas de vida en el pod
 
 
 class _GrabacionConCdp:
@@ -172,8 +172,8 @@ def main() -> None:
         try:
             if not turno.conservar():
                 drenaje.pedir()  # otro supervisor tiene el candado: nada nuevo, y fuera en cuanto esté todo enviado
-            if drenaje.hecho():
-                break
+            if turno.perdido and drenaje.hecho():
+                break  # en una parada del pod no: el SIGTERM llega cuando acaba el preStop
             sup.paso()
         except Exception as ex:  # noqa: BLE001 — la base o la plataforma caídas un momento no paran el supervisor
             registro("vuelta fallida:", type(ex).__name__)
