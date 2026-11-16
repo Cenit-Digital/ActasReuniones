@@ -590,6 +590,17 @@ class Repositorio:
             c.execute("UPDATE reuniones SET repetida_en = now() WHERE id = %s AND repetida_en IS NULL", (r["id"],))
         return fila[0] if fila else None
 
+    def cuenta_atascadas(self) -> int:
+        """Reuniones con más de seis horas en un estado intermedio, sin identificadores ni contenido."""
+        with self.conexion() as c:
+            fila = c.execute(
+                "SELECT count(*) FROM reuniones WHERE (estado IN ('pedida', 'grabando', 'grabada', 'transcribiendo') "
+                "AND estado_desde < now() - interval '6 hours') "
+                "OR (estado = 'programada' AND programada_para < now() - interval '6 hours')"
+            ).fetchone()
+        assert fila is not None
+        return int(fila[0])
+
     def cuenta_por_estado(self) -> dict[str, int]:
         with self.conexion() as c:
             filas = c.execute("SELECT estado, count(*) FROM reuniones GROUP BY estado").fetchall()
