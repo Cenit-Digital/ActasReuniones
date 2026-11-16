@@ -4,8 +4,12 @@
 # contenedor (imagen oficial de Playwright por digest), sin ningún Secret. Raíz de solo lectura, sin capacidades y con usuario
 # sin privilegios (lo fija también el pod).
 
-# python:3.12-slim-trixie (Python 3.12.15), manifiesto linux/amd64, leído con `crane digest --platform` el 2026-10-24.
-FROM docker.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c AS construir
+# Python 3.12.16, manifiesto linux/amd64. La base aún no incorpora la corrección de zlib de Debian DSA-6613-1.
+FROM docker.io/library/python:3.12-slim-trixie@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177 AS base
+RUN apt-get update && apt-get install -y --no-install-recommends zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM base AS construir
 # uv 0.13.5 (índice multiplataforma, `crane digest ghcr.io/astral-sh/uv:0.13.5`, 2026-10-24).
 COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/opt/actas/venv
@@ -17,7 +21,7 @@ COPY migraciones ./migraciones
 COPY textos ./textos
 RUN uv sync --locked --no-dev --no-editable
 
-FROM docker.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c
+FROM base
 COPY --from=construir /opt/actas/venv /opt/actas/venv
 ENV PATH=/opt/actas/venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1
 USER 1000:1000
