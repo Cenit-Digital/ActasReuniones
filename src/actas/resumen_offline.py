@@ -28,7 +28,7 @@ _SEUDONIMO = re.compile(r"(?<!\w)S[0-9]+(?!\w)", re.IGNORECASE)
 _SISTEMA = (
     "Devuelve únicamente JSON con resumen (texto), temas, decisiones y pendientes (listas de texto), "
     "y tareas (lista de objetos con que, responsable y fecha_limite; los dos últimos texto o null). "
-    "No inventes responsables ni fechas; usa null si no constan. Las fechas usan AAAA-MM-DD."
+    "Responsable debe ser exactamente un seudónimo conocido o null; no inventes fechas. Las fechas usan AAAA-MM-DD."
 )
 
 
