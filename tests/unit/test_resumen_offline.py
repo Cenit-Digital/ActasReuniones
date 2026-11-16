@@ -89,3 +89,23 @@ def test_rechaza_responsable_que_no_es_un_seudonimo_conocido_exacto(responsable)
     respuesta = {"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(acta)}]}
     with pytest.raises(ErrorResumen):
         validar_respuesta(respuesta, {"S1": "Ana", "S2": "Bruno"})
+
+
+def test_rechaza_entrada_grande_antes_de_normalizar(monkeypatch):
+    def prohibido(_valor):
+        raise AssertionError("no debe copiar ni normalizar la entrada")
+
+    monkeypatch.setattr("actas.resumen_offline._nfc", prohibido)
+    with pytest.raises(ErrorResumen, match="demasiado grande"):
+        preparar([("ida", "a" * 900_001)], {"ida": "Ana"})
+    with pytest.raises(ErrorResumen, match="demasiado grande"):
+        preparar([("ida", "ñ" * 300_000), ("ida", "ñ" * 150_001)], {"ida": "Ana"})
+
+
+def test_limites_de_numero_y_de_identidad():
+    with pytest.raises(ErrorResumen, match="demasiados"):
+        preparar([("ida", "x")] * 10_001, {"ida": "Ana"})
+    with pytest.raises(ErrorResumen, match="demasiados"):
+        preparar([("id0", "x")], {f"id{i}": f"Nombre{i}" for i in range(17)})
+    with pytest.raises(ErrorResumen, match="identidad inválida"):
+        preparar([("ida", "x")], {"ida": "x" * 257})

@@ -2,7 +2,8 @@
 
 Solo sustituye coincidencias literales de identificadores y nombres facilitados (Unicode NFC, sin distinguir mayúsculas,
 con límites de palabra). No detecta alias, faltas, inflexiones ni referencias indirectas; no anonimiza el texto libre.
-No conectar a un proveedor sin revisar esa limitación y el contrato de structured outputs del gateway.
+No valida si el contenido del acta es verdadero ni fiel a la transcripción. No conectar a un proveedor sin revisar
+esa limitación y el contrato de structured outputs del gateway.
 """
 
 import json
@@ -16,6 +17,12 @@ from typing import Any, cast
 class ErrorResumen(ValueError):
     """Datos ambiguos, respuesta rechazada o acta inválida; nunca incluye contenido de la reunión."""
 
+
+# El supervisor admite hasta 16 pistas; 10 000 segmentos y 900 kB son límites locales provisionales, no capacidad certificada.
+_MAX_SOCIOS = 16
+_MAX_SEGMENTOS = 10_000
+_MAX_TEXTO_BYTES = 900_000
+_MAX_IDENTIDAD = 256
 
 _SEUDONIMO = re.compile(r"(?<!\w)S[0-9]+(?!\w)", re.IGNORECASE)
 _SISTEMA = (
@@ -33,11 +40,34 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
     """Construye la petición textual local y el mapa privado para restaurar nombres. No envía ni registra nada."""
     if not socios or not segmentos:
         raise ErrorResumen("faltan socios o segmentos")
+    if len(socios) > _MAX_SOCIOS or len(segmentos) > _MAX_SEGMENTOS:
+        raise ErrorResumen("demasiados socios o segmentos")
+    # Contar antes de normalizar, plegar o crear el mapa de posiciones. len(str) permite rechazar un único segmento enorme
+    # sin codificarlo; la codificación posterior está acotada por el presupuesto restante.
+    restantes = _MAX_TEXTO_BYTES
+    for hablante, texto in segmentos:
+        if not isinstance(hablante, str) or not isinstance(texto, str):
+            raise ErrorResumen("segmento inválido")
+        if len(texto) > restantes:
+            raise ErrorResumen("transcripción demasiado grande")
+        try:
+            restantes -= len(texto.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise ErrorResumen("transcripción inválida") from None
+        if restantes < 0:
+            raise ErrorResumen("transcripción demasiado grande")
     mapa: dict[str, str] = {}
     aliases: dict[str, str] = {}
     por_id: dict[str, str] = {}
     for i, (identificador, nombre) in enumerate(socios.items(), 1):
-        if not isinstance(identificador, str) or not isinstance(nombre, str) or not identificador.strip() or not nombre.strip():
+        if (
+            not isinstance(identificador, str)
+            or not isinstance(nombre, str)
+            or len(identificador) > _MAX_IDENTIDAD
+            or len(nombre) > _MAX_IDENTIDAD
+            or not identificador.strip()
+            or not nombre.strip()
+        ):
             raise ErrorResumen("identidad inválida")
         sid = f"S{i}"
         por_id[identificador] = sid
@@ -76,7 +106,7 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
         partes.append(texto[anterior:])
         lineas.append(f"{por_id[hablante]}: {''.join(partes)}")
     contenido = "\n".join(lineas)
-    if len(contenido.encode("utf-8")) > 900_000:
+    if len(contenido.encode("utf-8")) > _MAX_TEXTO_BYTES:
         raise ErrorResumen("transcripción demasiado grande")
     return {
         "model": "claude-sonnet-5-5",
