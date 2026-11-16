@@ -119,11 +119,8 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
     # inocuas que contienen un nombre como subcadena; no cubre alias ni otros datos identificativos.
     representacion = _nfc(json.dumps(peticion, ensure_ascii=False)).casefold()
     textos = (_nfc(contenido).casefold(), _nfc(_SISTEMA).casefold())
-    if any(
-        _nfc(nombre.strip()).casefold() in representacion or any(_nfc(nombre.strip()).casefold() in t for t in textos)
-        for nombre in socios.values()
-    ):
-        raise ErrorResumen("un nombre conocido sigue en la petición")
+    if any(alias in representacion or any(alias in texto for texto in textos) for alias in aliases):
+        raise ErrorResumen("una identidad conocida sigue en la petición")
     return peticion, mapa
 
 

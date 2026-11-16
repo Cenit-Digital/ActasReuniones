@@ -121,11 +121,17 @@ def test_rechaza_respuesta_enorme_o_demasiado_profunda_sin_exponer_contenido():
 
 @pytest.mark.parametrize("nombre,texto", [("Ana", "Mariana asistió."), ("Straße", "La STRASSENBAHN pasó.")])
 def test_rechaza_nombres_conocidos_como_subcadena(nombre, texto):
-    with pytest.raises(ErrorResumen, match="nombre conocido") as error:
+    with pytest.raises(ErrorResumen, match="identidad conocida") as error:
         preparar([("ida", texto)], {"ida": nombre})
     assert nombre not in str(error.value) and texto not in str(error.value)
 
 
 def test_rechaza_nombre_en_prompt_fijo():
-    with pytest.raises(ErrorResumen, match="nombre conocido"):
+    with pytest.raises(ErrorResumen, match="identidad conocida"):
         preparar([("ida", "Hola.")], {"ida": "tareas"})
+
+
+def test_rechaza_identificador_residual_como_subcadena():
+    with pytest.raises(ErrorResumen, match="identidad conocida") as error:
+        preparar([("ida", "La vida sigue.")], {"ida": "Beatriz"})
+    assert "vida" not in str(error.value)
