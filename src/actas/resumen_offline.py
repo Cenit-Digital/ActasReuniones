@@ -109,12 +109,19 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
     contenido = "\n".join(lineas)
     if len(contenido.encode("utf-8")) > _MAX_TEXTO_BYTES:
         raise ErrorResumen("transcripción demasiado grande")
-    return {
+    peticion = {
         "model": "claude-sonnet-5-5",
         "system": _SISTEMA,
         "messages": [{"role": "user", "content": contenido}],
         "max_tokens": 4096,
-    }, mapa
+    }
+    # Guardia conservadora: incluye claves, valores y texto desescapado, con NFC y casefold. Puede rechazar palabras
+    # inocuas que contienen un nombre como subcadena; no cubre alias ni otros datos identificativos.
+    representacion = _nfc(json.dumps(peticion, ensure_ascii=False)).casefold()
+    textos = (_nfc(contenido).casefold(), _nfc(_SISTEMA).casefold())
+    if any(alias in representacion or any(alias in texto for texto in textos) for alias in aliases):
+        raise ErrorResumen("una identidad conocida sigue en la petición")
+    return peticion, mapa
 
 
 def _objeto_unico(pares: list[tuple[str, Any]]) -> dict[str, Any]:
