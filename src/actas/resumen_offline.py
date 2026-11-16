@@ -23,6 +23,7 @@ _MAX_SOCIOS = 16
 _MAX_SEGMENTOS = 10_000
 _MAX_TEXTO_BYTES = 900_000
 _MAX_IDENTIDAD = 256
+_MAX_RESPUESTA_BYTES = 1_000_000
 
 _SEUDONIMO = re.compile(r"(?<!\w)S[0-9]+(?!\w)", re.IGNORECASE)
 _SISTEMA = (
@@ -135,13 +136,21 @@ def validar_respuesta(respuesta: Mapping[str, Any], mapa: Mapping[str, str]) -> 
     bloque = bloques[0]
     if set(bloque) != {"type", "text"} or bloque["type"] != "text" or not isinstance(bloque["text"], str):
         raise ErrorResumen("contenido inválido")
+    texto = bloque["text"]
+    if len(texto) > _MAX_RESPUESTA_BYTES:
+        raise ErrorResumen("respuesta demasiado grande")
+    try:
+        if len(texto.encode("utf-8")) > _MAX_RESPUESTA_BYTES:
+            raise ErrorResumen("respuesta demasiado grande")
+    except UnicodeEncodeError:
+        raise ErrorResumen("respuesta inválida") from None
     try:
         acta = json.loads(
-            bloque["text"],
+            texto,
             object_pairs_hook=_objeto_unico,
             parse_constant=lambda _: (_ for _ in ()).throw(ErrorResumen("constante inválida")),
         )
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         raise ErrorResumen("JSON inválido") from None
     if not isinstance(acta, dict) or set(acta) != {"resumen", "temas", "decisiones", "tareas", "pendientes"}:
         raise ErrorResumen("esquema inválido")

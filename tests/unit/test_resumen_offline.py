@@ -109,3 +109,11 @@ def test_limites_de_numero_y_de_identidad():
         preparar([("id0", "x")], {f"id{i}": f"Nombre{i}" for i in range(17)})
     with pytest.raises(ErrorResumen, match="identidad inválida"):
         preparar([("ida", "x")], {"ida": "x" * 257})
+
+
+def test_rechaza_respuesta_enorme_o_demasiado_profunda_sin_exponer_contenido():
+    for texto in ("x" * 1_000_001, "ñ" * 500_001, "[" * 1500 + "0" + "]" * 1500):
+        respuesta = {"stop_reason": "end_turn", "content": [{"type": "text", "text": texto}]}
+        with pytest.raises(ErrorResumen) as error:
+            validar_respuesta(respuesta, {"S1": "Ana"})
+        assert len(str(error.value)) < 100 and texto not in str(error.value)
