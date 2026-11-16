@@ -591,3 +591,20 @@ def test_mover_solo_compara_lo_programado(repo):
     rid = repo.pedir(Peticion(("pablo",), "v1"))
     with pytest.raises(ValueError):
         repo.mover(rid, Estado.PEDIDA, Estado.GRABANDO, igual={"estado": "pedida"})
+
+
+def test_alerta_programadas_solo_seis_horas_despues_de_la_hora_prevista(repo_panel, repo):
+    rid = repo_panel.programar(_prog(_sala(repo)), USUARIO)
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET estado_desde = now() - interval '10 hours' WHERE id = %s", (rid,))
+    assert repo.cuenta_atascadas() == 0  # Sigue en el futuro aunque fuera programada hace tiempo.
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET programada_para = now() - interval '5 hours' WHERE id = %s", (rid,))
+    assert repo.cuenta_atascadas() == 0
+    with repo.conexion() as c:
+        c.execute("UPDATE reuniones SET programada_para = now() - interval '7 hours' WHERE id = %s", (rid,))
+    assert repo.cuenta_atascadas() == 1
+    assert repo_panel.cancelar(rid, USUARIO, False)
+    assert repo.cuenta_atascadas() == 0
+    with repo.conexion() as c:
+        assert c.execute("SELECT estado_desde > now() - interval '1 minute' FROM reuniones WHERE id = %s", (rid,)).fetchone()[0]

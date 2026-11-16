@@ -594,8 +594,9 @@ class Repositorio:
         """Reuniones con más de seis horas en un estado intermedio, sin identificadores ni contenido."""
         with self.conexion() as c:
             fila = c.execute(
-                "SELECT count(*) FROM reuniones WHERE estado IN ('pedida', 'grabando', 'grabada', 'transcribiendo') "
-                "AND estado_desde < now() - interval '6 hours'"
+                "SELECT count(*) FROM reuniones WHERE (estado IN ('pedida', 'grabando', 'grabada', 'transcribiendo') "
+                "AND estado_desde < now() - interval '6 hours') "
+                "OR (estado = 'programada' AND programada_para < now() - interval '6 hours')"
             ).fetchone()
         assert fila is not None
         return int(fila[0])
