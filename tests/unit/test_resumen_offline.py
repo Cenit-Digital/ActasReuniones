@@ -52,9 +52,9 @@ def test_rechaza_refusal_json_ambiguo_y_seudonimos_desconocidos():
 
 
 def test_coincidencia_literal_no_afirma_ocultar_alias_o_referencias_indirectas():
-    peticion, _ = preparar([("a", "Anita dijo que mañana llamaría la directora.")], {"a": "Ana"})
+    peticion, _ = preparar([("ida", "Pepe habló con la directora.")], {"ida": "José"})
     texto = peticion["messages"][0]["content"]
-    assert "Anita" in texto and "mañana" in texto and "directora" in texto
+    assert "Pepe" in texto and "directora" in texto
 
 
 @pytest.mark.parametrize(
@@ -117,3 +117,15 @@ def test_rechaza_respuesta_enorme_o_demasiado_profunda_sin_exponer_contenido():
         with pytest.raises(ErrorResumen) as error:
             validar_respuesta(respuesta, {"S1": "Ana"})
         assert len(str(error.value)) < 100 and texto not in str(error.value)
+
+
+@pytest.mark.parametrize("nombre,texto", [("Ana", "Mariana asistió."), ("Straße", "La STRASSENBAHN pasó.")])
+def test_rechaza_nombres_conocidos_como_subcadena(nombre, texto):
+    with pytest.raises(ErrorResumen, match="nombre conocido") as error:
+        preparar([("ida", texto)], {"ida": nombre})
+    assert nombre not in str(error.value) and texto not in str(error.value)
+
+
+def test_rechaza_nombre_en_prompt_fijo():
+    with pytest.raises(ErrorResumen, match="nombre conocido"):
+        preparar([("ida", "Hola.")], {"ida": "tareas"})
