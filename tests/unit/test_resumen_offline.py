@@ -69,3 +69,23 @@ def test_rechaza_tareas_invalidas(tarea):
     texto = json.dumps({"resumen": "ok", "temas": [], "decisiones": [], "tareas": [tarea], "pendientes": []})
     with pytest.raises(ErrorResumen):
         validar_respuesta({"stop_reason": "end_turn", "content": [{"type": "text", "text": texto}]}, {"S1": "Ana"})
+
+
+def test_casefold_unicode_expansiones_y_normalizacion():
+    peticion, _ = preparar([("ida", "STRASSE y Straße vieron a Jose\u0301.")], {"ida": "Straße", "idb": "José"})
+    texto = peticion["messages"][0]["content"]
+    assert texto == "S1: S1 y S1 vieron a S2."
+
+
+@pytest.mark.parametrize("responsable", ["Ana", "S1 y S2", "s1", "S3", "", "S1 "])
+def test_rechaza_responsable_que_no_es_un_seudonimo_conocido_exacto(responsable):
+    acta = {
+        "resumen": "ok",
+        "temas": [],
+        "decisiones": [],
+        "tareas": [{"que": "algo", "responsable": responsable, "fecha_limite": None}],
+        "pendientes": [],
+    }
+    respuesta = {"stop_reason": "end_turn", "content": [{"type": "text", "text": json.dumps(acta)}]}
+    with pytest.raises(ErrorResumen):
+        validar_respuesta(respuesta, {"S1": "Ana", "S2": "Bruno"})

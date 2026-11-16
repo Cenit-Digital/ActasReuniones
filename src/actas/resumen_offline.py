@@ -51,9 +51,7 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
                 raise ErrorResumen("identidades ambiguas")
             aliases[clave] = sid
     # Reemplazo más largo primero: evita que un nombre compuesto quede parcialmente sustituido.
-    expresion = re.compile(
-        r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(aliases, key=len, reverse=True)) + r")(?!\w)", re.IGNORECASE
-    )
+    expresion = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(aliases, key=len, reverse=True)) + r")(?!\w)")
     lineas = []
     for hablante, texto in segmentos:
         if hablante not in por_id or not isinstance(texto, str):
@@ -61,11 +59,22 @@ def preparar(segmentos: Sequence[tuple[str, str]], socios: Mapping[str, str]) ->
         texto = _nfc(texto)
         if _SEUDONIMO.search(texto):
             raise ErrorResumen("colisión de seudónimo")
-        try:
-            limpio = expresion.sub(lambda m: aliases[_nfc(m.group()).casefold()], texto)
-        except KeyError:
-            raise ErrorResumen("coincidencia ambigua") from None
-        lineas.append(f"{por_id[hablante]}: {limpio}")
+        # casefold puede expandir un carácter (ß → ss): conservamos la posición original de cada carácter expandido.
+        plegado = "".join(c.casefold() for c in texto)
+        posiciones = [i for i, c in enumerate(texto) for _ in c.casefold()]
+        partes: list[str] = []
+        anterior = 0
+        for coincidencia in expresion.finditer(plegado):
+            inicio, fin = coincidencia.span()
+            if (inicio and posiciones[inicio - 1] == posiciones[inicio]) or (
+                fin < len(posiciones) and posiciones[fin - 1] == posiciones[fin]
+            ):
+                raise ErrorResumen("coincidencia Unicode ambigua")
+            primero, ultimo = posiciones[inicio], posiciones[fin - 1] + 1
+            partes.extend((texto[anterior:primero], aliases[coincidencia.group()]))
+            anterior = ultimo
+        partes.append(texto[anterior:])
+        lineas.append(f"{por_id[hablante]}: {''.join(partes)}")
     contenido = "\n".join(lineas)
     if len(contenido.encode("utf-8")) > 900_000:
         raise ErrorResumen("transcripción demasiado grande")
@@ -120,7 +129,8 @@ def validar_respuesta(respuesta: Mapping[str, Any], mapa: Mapping[str, str]) -> 
             or not isinstance(tarea["que"], str)
         ):
             raise ErrorResumen("tarea inválida")
-        if tarea["responsable"] is not None and not isinstance(tarea["responsable"], str):
+        responsable = tarea["responsable"]
+        if responsable is not None and (not isinstance(responsable, str) or responsable not in mapa):
             raise ErrorResumen("responsable inválido")
         fecha = tarea["fecha_limite"]
         if fecha is not None:
