@@ -177,6 +177,7 @@ class Supervisor:
         if self.ultima_purga_actas_s is None or self.reloj() - self.ultima_purga_actas_s >= PURGA_ACTAS_S:
             self._purgar_actas()
         self.metricas.por_estado = self.repo.cuenta_por_estado()
+        self.metricas.atascadas = self.repo.cuenta_atascadas()
         self.metricas.grabaciones_bytes, con_audio = self._tmpfs()
         if drenando:
             self._comprobar_drenaje()

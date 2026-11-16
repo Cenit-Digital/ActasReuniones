@@ -15,12 +15,14 @@ def test_texto_con_los_valores_y_un_estado_por_linea():
     m.por_estado = {"error": 2, "transcrita": 5}
     m.grabaciones_bytes = 1234
     m.drenaje = 1
+    m.atascadas = 2
     t = m.texto()
     assert "actas_aviso_sin_coincidencia 1\n" in t
     assert "actas_errores_total 2\n" in t
     assert 'actas_reuniones{estado="error"} 2\n' in t
     assert 'actas_reuniones{estado="pedida"} 0\n' in t
     assert "actas_grabaciones_bytes 1234\n" in t
+    assert "actas_reuniones_atascadas 2\n" in t
     assert "actas_drenaje 1\n" in t  # lo lee el preStop del contenedor chromium
 
 

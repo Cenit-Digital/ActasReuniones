@@ -23,6 +23,7 @@ class Metricas:
         self.ultimo_paso_s = 0.0
         self.grabaciones_bytes = 0
         self.drenaje = 0  # 0: normal; 1: el pod se para y no empieza nada nuevo; 2: todo enviado, ya puede pararse
+        self.atascadas = 0
         self.por_estado: dict[str, int] = {}
 
     def sumar(self, nombre: str, n: int = 1) -> None:
@@ -59,6 +60,9 @@ class Metricas:
                 "# HELP actas_drenaje 0 normal; 1 el pod se para (no empieza grabaciones); 2 audio enviado, puede pararse.",
                 "# TYPE actas_drenaje gauge",
                 f"actas_drenaje {self.drenaje}",
+                "# HELP actas_reuniones_atascadas Reuniones en un estado intermedio durante más de seis horas.",
+                "# TYPE actas_reuniones_atascadas gauge",
+                f"actas_reuniones_atascadas {self.atascadas}",
                 "# TYPE actas_reuniones gauge",
             ]
             lineas += [f'actas_reuniones{{estado="{e.value}"}} {self.por_estado.get(e.value, 0)}' for e in Estado]
