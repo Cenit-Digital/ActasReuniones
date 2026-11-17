@@ -24,6 +24,7 @@ from actas.conformidad import Peticion
 from actas.estados import Estado, TransicionNoValida, transicion
 from actas.formulario import Socio
 from actas.planificador import Programacion
+from actas.resumen_offline import validar_respuesta
 
 _ESQUEMA = re.compile(r"[a-z][a-z0-9_]{0,30}")
 # Lo programado de una reunión (V3): lo que el supervisor compara al moverla para no actuar sobre datos viejos.
@@ -82,6 +83,26 @@ class Repositorio:
 
     def cerrar(self) -> None:
         """Sin pool: una conexión por operación (como mucho unas pocas por minuto)."""
+
+    def guardar_acta_offline(self, rid: str, respuesta: Mapping[str, Any], mapa: Mapping[str, str]) -> bool:
+        """Valida y persiste un acta; no inicia llamadas ni modifica el estado de la reunión."""
+        acta = validar_respuesta(respuesta, mapa)
+        with self.conexion() as c:
+            reunion = c.execute(
+                "SELECT estado = 'transcrita' AND papelera_en IS NULL "
+                "AND coalesce(fin, programada_para, creado_en) >= now() - interval '12 months' "
+                "FROM reuniones WHERE id = %s FOR UPDATE",
+                (rid,),
+            ).fetchone()
+            if reunion is None or not reunion[0]:
+                raise ValueError("reunión no disponible")
+            existente = c.execute("SELECT contenido FROM actas_resumen WHERE reunion_id = %s", (rid,)).fetchone()
+            if existente is not None:
+                if existente[0] != acta:
+                    raise ValueError("acta ya existente")
+                return True
+            c.execute("INSERT INTO actas_resumen (reunion_id, contenido) VALUES (%s, %s)", (rid, Jsonb(acta)))
+            return True
 
     @contextmanager
     def conexion(self) -> Iterator[psycopg.Connection[Any]]:
