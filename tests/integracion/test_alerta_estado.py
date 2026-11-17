@@ -22,8 +22,8 @@ def test_migracion_historica_usa_ultimo_evento_o_actualizacion(dsn, monkeypatch)
     from actas import base
 
     url, esquema = dsn
-    migraciones = base._migraciones()
-    monkeypatch.setattr(base, "_migraciones", lambda: migraciones[:-1])
+    migraciones = [(nombre, contenido) for nombre, contenido in base._migraciones() if nombre <= "0008_estado_desde.sql"]
+    monkeypatch.setattr(base, "_migraciones", lambda: [(n, c) for n, c in migraciones if n != "0008_estado_desde.sql"])
     base.migrar(url, esquema)
     repo = base.Repositorio(url, esquema)
     con_evento = repo.pedir(Peticion(("socioa",), "v1"))
