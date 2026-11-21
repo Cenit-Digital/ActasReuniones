@@ -1,0 +1,66 @@
+name: Diseño (Impeccable)
+
+# Puerta de diseño sobre el CÓDIGO: `node .harness/impeccable-gate.mjs` pasa el detector de Impeccable (versión fijada en
+# la puerta) por las rutas que el proyecto declara en `ui.paths` de harness.config.json y exige 0 hallazgos, 0 avisos y
+# 0 ignorados sin uso. Sin `ui.paths` el proyecto no tiene web: la puerta solo comprueba que la skill está instalada y lo
+# dice. Sobre el código el detector solo aplica las reglas por patrón; las de página (contraste, tamaños, jerarquía…) las
+# comprueba `--rendered <url>` en la CI del proyecto, con la app servida y un navegador (docs/impeccable.md).
+#
+# Dos jobs con los mismos pasos (anclas YAML) y la condición contraria, como pr-body.yml: con la variable de repo
+# CI_RUNNER=cenit-runners (repos privados de Cenit-Digital por encima del 80 % del cupo) corre el gemelo en los runners
+# propios (ARC, pod sin root: exige `container:` y un HOME escribible, porque el motor del detector se descarga en
+# ~/.impeccable/bin/ y npx guarda el paquete en ~/.npm; el mismo HOME bajo /__w es el que usa RadioGTAVI para su detector
+# en ARC). Los PR de Renovate siguen la misma variable: en los repos de Cenit-Digital van a los runners propios, que es lo
+# que decidieron KubernetesInfrastructure, Transcribir, WebNails y la consola (los runners de GitHub los rechazan por cupo).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: impeccable-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NO_COLOR: "1"
+
+jobs:
+  diseno:
+    name: Diseño (Impeccable)
+    if: vars.CI_RUNNER != 'cenit-runners'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - &checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - &setup_node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          package-manager-cache: false # sin caché automático: falla con "packageManager: pnpm" (ver pr-body.yml)
+      - &puerta
+        name: Detector de diseño sobre ui.paths
+        run: node .harness/impeccable-gate.mjs
+
+  diseno-propio:
+    name: Diseño (Impeccable) (runners propios)
+    if: vars.CI_RUNNER == 'cenit-runners'
+    runs-on: cenit-runners
+    timeout-minutes: 15
+    container:
+      image: docker.io/library/node:22-bookworm@sha256:82693da96a4e38b8c0e2bf0c5df58fcb86d2d25e5a235c07748f09bfa38567c2
+    env:
+      HOME: /__w/_temp/home
+    steps:
+      - name: HOME escribible
+        run: mkdir -p "$HOME"
+      - *checkout
+      - *setup_node
+      - *puerta

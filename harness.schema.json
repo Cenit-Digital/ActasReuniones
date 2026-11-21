@@ -43,6 +43,32 @@
         "tests": { "type": "string", "default": "tests" }
       }
     },
+    "ui": {
+      "type": "object",
+      "description": "Web del proyecto para la puerta de diseño (.harness/impeccable-gate.mjs, workflow «Diseño (Impeccable)»). Ver docs/impeccable.md.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": [],
+          "description": "Rutas relativas (ficheros o carpetas) con el código de la web: HTML, CSS, JSX, TSX, Vue, Svelte o Astro. Vacía: el proyecto no tiene web y la puerta no ejecuta el detector. Cada ruta debe existir y tener algo que analizar."
+        },
+        "routes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^/" },
+          "default": [],
+          "description": "Rutas de la web (empiezan por «/») que `impeccable-gate.mjs --rendered <url base>` analiza renderizadas, en escritorio y en móvil. Obligatoria si hay ui.paths: el análisis del código solo aplica las reglas por patrón."
+        },
+        "themes": {
+          "type": "array",
+          "items": { "enum": ["light", "dark"] },
+          "uniqueItems": true,
+          "minItems": 1,
+          "default": ["light"],
+          "description": "Temas que `--rendered` analiza: el navegador sirve `prefers-color-scheme` claro u oscuro. Si la web tiene tema oscuro, pon [\"light\", \"dark\"]."
+        }
+      }
+    },
     "mutation": {
       "type": "object",
       "properties": {

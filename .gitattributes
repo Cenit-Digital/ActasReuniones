@@ -27,3 +27,6 @@ bin/harness text eol=lf
 *.ico  binary
 *.woff binary
 *.woff2 binary
+
+# Scripts de Windows de la skill Impeccable: CRLF.
+*.cmd  text eol=crlf
