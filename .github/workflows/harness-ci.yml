@@ -53,9 +53,12 @@ jobs:
           UV_PYTHON_INSTALL_DIR="$base/uv-python" UV_CACHE_DIR="$base/uv-cache" "$base/bin/uv" python install --no-bin 3.12
       - &init
         run: node .harness/harness.mjs init
+      # upgrade.test.mjs no corre en este derivado: desde la v0.5.0 harness.manifest.json es el de la plantilla, idéntico, y no
+      # clasifica los ficheros del stack (pyproject.toml, uv.lock, migraciones/…), igual que en Scrapear, el Portal de Citas y
+      # RAGchatbotIA (docs/decisiones/0003-impeccable-sustituye-a-claude-design.md).
       - &tests_plantilla
-        name: Tests del script de propagación, del manifiesto y del comprobador del PR
-        run: node --test .harness/test/upgrade.test.mjs .harness/test/pr-body.test.mjs
+        name: Tests del comprobador del PR
+        run: node --test .harness/test/pr-body.test.mjs
 
   engine-tests:
     name: Motor (tests)
@@ -164,3 +167,58 @@ jobs:
         env:
           PYTHONPATH: src
         run: python3 -m pytest -rs tests/integracion/test_grabador.py tests/integracion/test_panel_navegador.py
+
+  # ── Diseño renderizado (Impeccable, docs/impeccable.md) ──────────────────────────────────────────────────────────────
+  # La puerta de diseño sobre las páginas servidas: el panel real con el repositorio de mentira de los tests de navegador
+  # (tests/integracion/panel_demo.py, sin PostgreSQL ni red) y las dos cabeceras que pone Traefik. Recorre ui.routes de
+  # harness.config.json en escritorio y móvil, en tema claro y oscuro, con el Chromium de la imagen oficial de Playwright
+  # (/ms-playwright, con Node para npx). Con su gemelo `-propio` para los runners de Cenit (ARC).
+  diseno-renderizado:
+    name: Diseño renderizado (Impeccable)
+    if: vars.CI_RUNNER != 'cenit-runners' || (github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: &imagen_playwright mcr.microsoft.com/playwright:v1.64.1-noble@sha256:bdfda2a8fdf48707c5e50a49bd3e06d8d0c759153dc8ee057d8a81c3450bb3e9
+      # Como en el job grabador: sin --ipc=host, con el /dev/shm de 64 MB de Docker, Chromium puede caerse (run 40577012021).
+      options: --ipc=host
+    steps:
+      - &checkout_fijado
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - *uv
+      - &diseno_renderizado
+        name: Puerta de diseño (--rendered) sobre el panel de demostración
+        env:
+          HOME: /__w/_temp/home # en ARC el HOME es «/» y npx necesita uno escribible
+          PYTHONPATH: src:tests/integracion
+        run: |
+          mkdir -p "$HOME"
+          uv sync --locked
+          uv run --locked python tests/integracion/panel_demo.py --puerto 4310 > "$RUNNER_TEMP/panel-demo.log" 2>&1 &
+          listo=no
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4310/salud; then listo=si; break; fi
+            sleep 1
+          done
+          if [ "$listo" != si ]; then
+            echo "::error::el panel de demostración no arrancó en 60 s"
+            cat "$RUNNER_TEMP/panel-demo.log"
+            exit 1
+          fi
+          node .harness/impeccable-gate.mjs --rendered http://127.0.0.1:4310 || { cat "$RUNNER_TEMP/panel-demo.log"; exit 1; }
+
+  # Sin `options: --ipc=host`, como los demás gemelos de ARC (sin probar ahí). Si Chromium se cae por /dev/shm, se verá en
+  # el primer run en los runners propios.
+  diseno-renderizado-propio:
+    name: Diseño renderizado (Impeccable) (runners propios)
+    if: vars.CI_RUNNER == 'cenit-runners' && !(github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    runs-on: cenit-runners
+    timeout-minutes: 30
+    container:
+      image: *imagen_playwright
+    steps:
+      - *checkout_fijado
+      - *uv
+      - *diseno_renderizado
