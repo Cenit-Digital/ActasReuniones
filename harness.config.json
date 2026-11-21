@@ -14,6 +14,38 @@
     "src": "src",
     "tests": "tests"
   },
+  "ui": {
+    "paths": [
+      "src/actas/panel/estatico"
+    ],
+    "routes": [
+      "/",
+      "/reuniones/00000000-0000-4000-8000-000000000005",
+      "/reuniones/00000000-0000-4000-8000-000000000004",
+      "/reuniones/00000000-0000-4000-8000-000000000017",
+      "/reuniones/00000000-0000-4000-8000-000000000001",
+      "/buscar?q=presupuesto",
+      "/buscar",
+      "/grabar",
+      "/salas",
+      "/salas/nueva",
+      "/salas/5a1a0000-0000-4000-8000-000000000001",
+      "/salas/5a1a0000-0000-4000-8000-000000000001/clave",
+      "/programacion",
+      "/reuniones/00000000-0000-4000-8000-000000000002",
+      "/reuniones/00000000-0000-4000-8000-000000000002/modificar",
+      "/reuniones/00000000-0000-4000-8000-000000000002/cancelar",
+      "/reuniones/00000000-0000-4000-8000-000000000005/eliminar",
+      "/papelera",
+      "/reuniones/00000000-0000-4000-8000-0000000000aa",
+      "/reuniones/00000000-0000-4000-8000-000000000005/compartir",
+      "/reuniones/00000000-0000-4000-8000-000000000005/compartir?que=transcripcion&que=enlace_sala&socio=pablo&socio=roberto"
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ]
+  },
   "mutation": {
     "threshold": 0.8,
     "targets": []

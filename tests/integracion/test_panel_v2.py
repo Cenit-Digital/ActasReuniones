@@ -1,6 +1,6 @@
-"""Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023): maquetación con los tokens de transcribir (@a40), estados con texto y
-glifo (@a42), enlaces cruzados con transcribir (@a62, lado del panel) y páginas de mensaje. Sin base: TestClient y
-`panel_falso.RepoFalso`. La auditoría con axe (@a41) va en test_panel_navegador.py, con un Chromium real."""
+"""Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023): maquetación con los tokens de la marca Cénit (@a40, DESIGN.md),
+estados con texto y glifo (@a42), enlaces cruzados con transcribir (@a62, lado del panel) y páginas de mensaje. Sin base:
+TestClient y `panel_falso.RepoFalso`. La auditoría con axe (@a41) va en test_panel_navegador.py, con un Chromium real."""
 
 import re
 from html.parser import HTMLParser
@@ -101,10 +101,11 @@ def test_cada_pagina_carga_solo_recursos_propios_y_nada_en_linea(cliente, ruta):
         assert cliente.get(url, headers=USUARIO).status_code == 200, url
 
 
-def test_la_hoja_lleva_los_tokens_terracota_clasica_en_los_dos_temas(cliente):
+def test_la_hoja_lleva_los_tokens_de_la_marca_cenit_en_los_dos_temas(cliente):
+    """DESIGN.md (copia de WebEmpresa@e7cbdaa): Noche & Oro por defecto y Bosque & Limón en claro."""
     css = cliente.get("/estilo.css", headers=USUARIO).text
-    oscuro = {"--bg": "#1a1820", "--surface": "#24212c", "--text": "#f4ece6", "--accent": "#c7663d", "--error": "#f08a8a"}
-    claro = {"--bg": "#fbf6f1", "--surface": "#ffffff", "--text": "#3a2c2a", "--accent": "#c2683f", "--error": "#b3261e"}
+    oscuro = {"--bg": "#0e1512", "--text": "#f7f4ee", "--accent-dark": "#c9a84c", "--error": "#f2b8b5", "--cabecera": "#1a2520"}
+    claro = {"--bg": "#f2f4ef", "--surface": "#ffffff", "--text": "#0f1d17", "--accent-dark": "#1e7a4f", "--error": "#b3261e"}
     for nombre, valor in [*oscuro.items(), *claro.items()]:
         assert f"{nombre}: {valor};" in css, nombre
     assert "prefers-color-scheme: light" in css and ":root[data-tema='claro']" in css
@@ -114,8 +115,8 @@ def test_las_fuentes_son_propias_y_se_sirven_como_woff2(cliente):
     css = cliente.get("/estilo.css", headers=USUARIO).text
     urls = re.findall(r"url\('([^']+)'\)", css)
     familias = set(re.findall(r"font-family: '([^']+)';", css))
-    assert familias == {"Manrope", "Gilda Display", "JetBrains Mono"}
-    assert len(urls) == 6
+    assert familias == {"Outfit", "DM Sans"}
+    assert len(urls) == 5
     for url in urls:
         assert url.startswith("/fuentes/") and url.endswith(".woff2")
         r = cliente.get(url, headers=USUARIO)
@@ -124,7 +125,7 @@ def test_las_fuentes_son_propias_y_se_sirven_como_woff2(cliente):
 
 
 def test_las_licencias_de_las_fuentes_viajan_con_ellas(cliente):
-    for nombre in ["OFL-manrope.txt", "OFL-gildadisplay.txt", "OFL-jetbrainsmono.txt"]:
+    for nombre in ["LICENSE-outfit.txt", "LICENSE-dm-sans.txt"]:
         r = cliente.get(f"/fuentes/{nombre}", headers=USUARIO)
         assert r.status_code == 200 and "SIL OPEN FONT LICENSE Version 1.1" in r.text
 
@@ -134,14 +135,14 @@ def test_solo_se_sirven_las_fuentes_conocidas(cliente, ruta):
     assert cliente.get(ruta, headers=USUARIO).status_code == 404
 
 
-@pytest.mark.parametrize("ruta", ["/estilo.css", "/tema.js", "/fuentes/manrope-latin.woff2"])
+@pytest.mark.parametrize("ruta", ["/estilo.css", "/tema.js", "/fuentes/dm-sans-latin-400-normal.woff2"])
 def test_los_estaticos_se_guardan_en_la_cache_del_navegador_y_las_paginas_no(cliente, ruta):
     assert cliente.get(ruta, headers=USUARIO).headers["cache-control"] == "private, max-age=86400"
     assert cliente.get("/", headers=USUARIO).headers["cache-control"] == "no-store"
 
 
 def test_los_estaticos_tambien_piden_el_proxy_y_el_usuario(cliente):
-    assert cliente.get("/fuentes/manrope-latin.woff2").status_code == 401
+    assert cliente.get("/fuentes/dm-sans-latin-400-normal.woff2").status_code == 401
     assert cliente.get("/tema.js").status_code == 401
 
 

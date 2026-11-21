@@ -32,7 +32,7 @@ Revisan y reportan; no editan `src/`. Son `optional` en `harness.manifest.json`:
 
 - **Cierre de tarea:** `bin/harness init` y `bin/harness test` en verde (`AGENTS.md` §5); en nivel crítico, además, la mutación que fija el plan.
 - **Revisión local del diff** antes de cualquier `git push`, a cargo de la persona (`AGENTS.md`, «Política de trabajo»).
-- **CI:** el workflow `harness-ci.yml` ejecuta `init` y los tests en cada PR; conviene que la protección de `main` exija esos checks.
+- **CI:** el workflow `harness-ci.yml` ejecuta `init` y los tests en cada PR, y «Diseño (Impeccable)» (`impeccable.yml`) pasa el detector de diseño por la web del proyecto (`docs/impeccable.md`); conviene que la protección de `main` exija esos checks.
 
 Si un proyecto quiere un hook, que sea barato (p. ej. el lint del fichero tocado) y, si tarda, `async: true`; nunca la suite completa en cada edición.
 

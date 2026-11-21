@@ -94,11 +94,12 @@ Característica: Captura y transcripción de las reuniones de socios (F1, ADR 00
     Cuando intenta un DELETE, un UPDATE de segmentos, salas, socios o su auditoría, o un DDL
     Entonces PostgreSQL lo rechaza
 
-  # Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023): el aspecto de transcribir, la misma funcionalidad que F2.
-  Escenario: @a40 tokens de transcribir y solo recursos propios
+  # Panel v2 (V1 de KubernetesInfrastructure#298, ADR 0023), la misma funcionalidad que F2; desde la adopción de Impeccable, con
+  # la marca Cénit de DESIGN.md (copia de WebEmpresa@e7cbdaa) en lugar del aspecto de transcribir.
+  Escenario: @a40 tokens de la marca Cénit y solo recursos propios
     Dado el panel v2
     Cuando se pide «/», «/reuniones/{id}», «/buscar» o «/grabar»
-    Entonces la página usa los tokens Terracota Clásica, con tema oscuro y claro
+    Entonces la página usa los tokens de la marca Cénit (Noche & Oro y Bosque & Limón), con tema oscuro y claro
     Y carga solo recursos del propio panel, fuentes incluidas, sin estilos ni scripts en línea
     Y la CSP lleva script-src 'self' sin unsafe-inline
 

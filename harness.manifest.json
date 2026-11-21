@@ -13,9 +13,13 @@
     "init.ps1", "init.sh", "scripts/harness-upgrade.mjs",
     "docs/configuration.md", "docs/gherkin.md",
     "docs/instrucciones-de-usuario.md",
-    "docs/modelos.md", "docs/mutation-testing.md", "docs/tdd.md", "docs/tooling.md", "docs/verification.md"
+    "docs/modelos.md", "docs/mutation-testing.md", "docs/tdd.md", "docs/tooling.md", "docs/verification.md",
+    ".claude/skills/impeccable/", ".agents/skills/impeccable/",
+    ".claude/agents/impeccable-asset-producer.md", ".claude/agents/impeccable-documenter.md", ".claude/agents/impeccable-finish-reviewer.md",
+    ".claude/agents/impeccable-manual-edit-applier.md", ".claude/agents/impeccable-motion-reviewer.md",
+    ".github/workflows/impeccable.yml", ".harness/impeccable-gate.mjs", "docs/impeccable.md"
   ],
-  "executable": ["bin/harness", "init.sh"],
+  "executable": ["bin/harness", "init.sh", ".claude/skills/impeccable/scripts/impeccable", ".agents/skills/impeccable/scripts/impeccable"],
   "optional": [".claude/agents/security_reviewer.md", ".claude/agents/a11y_seo_auditor.md", ".claude/agents/mentor.md"],
   "mixedBlock": ["AGENTS.md"],
   "blockSource": ".harness/agents-block.md",
@@ -23,12 +27,10 @@
   "project": [
     ".editorconfig", ".gitattributes", ".gitignore", ".github/CODEOWNERS", ".github/workflows/harness-ci.yml",
     "LICENSE", "README.md", "docs/architecture.md", "docs/conventions.md",
-    "features/", "src/", "tests/",
-    "migraciones/", "textos/", "pyproject.toml", "uv.lock", "scripts/pg-pruebas.sh", ".github/workflows/imagen.yml", "Dockerfile",
-    ".dockerignore", "cosmic-ray.toml", "requirements-ci.txt"
+    "features/", "src/", "tests/"
   ],
   "excluded": [
-    ".agents/skills/", ".github/AUTONOMOUS.md", ".github/workflows/autonomous-evolve.yml",
+    ".agents/skills/bash-defensive-patterns/", ".github/AUTONOMOUS.md", ".github/workflows/autonomous-evolve.yml",
     ".github/workflows/guard-sensitive-paths.yml", ".harness/agents-block.md", ".harness/test/", "docs/autonomous.md",
     "docs/decisiones/", "docs/memoria-organizacional.md",
     "scripts/sync-memoria.ps1", "scripts/sync-memoria.sh", "skills-lock.json"

@@ -40,3 +40,6 @@ Thumbs.db
 .idea/
 .vscode/
 mutantes.sqlite
+
+# Impeccable: configuración personal (docs/impeccable.md)
+.impeccable/config.local.json

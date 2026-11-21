@@ -225,12 +225,12 @@ def test_el_tema_elegido_se_recuerda_y_cambia_los_colores(chromium, panel):
         t, s = _abrir(cdp, 1280, "dark")
         _ir(cdp, s, origen, "/")
         assert _esperar(lambda: cdp.evaluar(s, "!!document.querySelector('#tema:not([hidden])')"))
-        assert cdp.evaluar(s, fondo) == "rgb(26, 24, 32)"
+        assert cdp.evaluar(s, fondo) == "rgb(14, 21, 18)"  # noche
         cdp.evaluar(s, "document.querySelector('#tema').click(); true")
-        assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
+        assert cdp.evaluar(s, fondo) == "rgb(242, 244, 239)"
         assert cdp.evaluar(s, "document.querySelector('#tema').getAttribute('aria-pressed')") == "true"
         _ir(cdp, s, origen, "/grabar")
-        assert cdp.evaluar(s, fondo) == "rgb(251, 246, 241)"
+        assert cdp.evaluar(s, fondo) == "rgb(242, 244, 239)"
         cdp.cerrar_pagina(t)
     finally:
         cdp.cerrar()
