@@ -23,8 +23,8 @@ NetBird y BasicAuth en Traefik. `python -m actas.panel`, en la misma imagen que 
 - CSP estricta (ADR 0023 de KubernetesInfrastructure, D2): solo recursos propios, sin nada en línea; el único JavaScript es
   `tema.js`, el botón del tema, y `copiar.js`, los botones «Copiar». Sin registro de accesos ni texto de las peticiones en el
   registro (@a32).
-- Maquetación v2 (V1 de KubernetesInfrastructure#298): los tokens «Terracota Clásica» de transcribir en `estatico/estilo.css`
-  y sus fuentes autoalojadas (SIL OFL 1.1, con sus licencias en `estatico/fuentes/`).
+- Maquetación (V1 de KubernetesInfrastructure#298): desde la adopción de Impeccable, la marca Cénit de `DESIGN.md` (copia de
+  WebEmpresa@e7cbdaa) en `estatico/estilo.css` y sus fuentes autoalojadas (SIL OFL 1.1, con sus licencias en `estatico/fuentes/`).
 
 Plantillas: Starlette 1.7.0, docs/templates.md: «When using the `directory` argument, Starlette enables autoescape by default
 for `.html`, `.htm`, and `.xml` templates using `jinja2.select_autoescape()`»; Jinja2 3.1.6, docs/api.rst: es «a recommended
@@ -106,18 +106,14 @@ ESTATICOS = {
     **{
         f"/fuentes/{f}": (f"fuentes/{f}", "font/woff2")
         for f in [
-            "manrope-latin.woff2",
-            "manrope-latin-ext.woff2",
-            "gilda-display-400-latin.woff2",
-            "gilda-display-400-latin-ext.woff2",
-            "jetbrains-mono-latin.woff2",
-            "jetbrains-mono-latin-ext.woff2",
+            "outfit-latin-600-normal.woff2",
+            "dm-sans-latin-400-normal.woff2",
+            "dm-sans-latin-500-normal.woff2",
+            "dm-sans-latin-600-normal.woff2",
+            "dm-sans-latin-700-normal.woff2",
         ]
     },
-    **{
-        f"/fuentes/{f}": (f"fuentes/{f}", "text/plain; charset=utf-8")
-        for f in ["OFL-manrope.txt", "OFL-gildadisplay.txt", "OFL-jetbrainsmono.txt"]
-    },
+    **{f"/fuentes/{f}": (f"fuentes/{f}", "text/plain; charset=utf-8") for f in ["LICENSE-outfit.txt", "LICENSE-dm-sans.txt"]},
 }
 
 

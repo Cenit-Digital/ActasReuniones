@@ -1,147 +1,135 @@
-/* Panel de actas v2 (V1 de KubernetesInfrastructure#298, ADR 0023): el aspecto de transcribir sin su cadena de compilación.
+/* Panel de actas (V1 de KubernetesInfrastructure#298, ADR 0023) con la marca Cénit (DESIGN.md, copia de WebEmpresa@e7cbdaa).
    Sin recursos externos ni nada en línea (CSP: style-src 'self'; font-src 'self'). */
 
-/* Fuentes autoalojadas (SIL Open Font License 1.1; licencias en /fuentes/OFL-*.txt), copiadas de transcribir
-   (web/public/fuentes/ y web/src/estilos/_fuentes.scss): subconjuntos latin y latin-ext con los unicode-range de Google Fonts.
-   Manrope y JetBrains Mono son variables: un fichero cubre todos los pesos. */
+/* Fuentes autoalojadas de la marca (SIL Open Font License 1.1; licencias en /fuentes/LICENSE-*.txt): los subconjuntos latin
+   de @fontsource, los mismos que sirve el panel de Scrapear. Outfit solo en 600 (títulos y nombre del panel). */
 @font-face {
-  font-family: 'Gilda Display';
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fuentes/outfit-latin-600-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'DM Sans';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url('/fuentes/gilda-display-400-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
-    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  src: url('/fuentes/dm-sans-latin-400-normal.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Gilda Display';
+  font-family: 'DM Sans';
   font-style: normal;
-  font-weight: 400;
+  font-weight: 500;
   font-display: swap;
-  src: url('/fuentes/gilda-display-400-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  src: url('/fuentes/dm-sans-latin-500-normal.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Manrope';
+  font-family: 'DM Sans';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 600;
   font-display: swap;
-  src: url('/fuentes/manrope-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
-    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  src: url('/fuentes/dm-sans-latin-600-normal.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'Manrope';
+  font-family: 'DM Sans';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 700;
   font-display: swap;
-  src: url('/fuentes/manrope-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400 500;
-  font-display: swap;
-  src: url('/fuentes/jetbrains-mono-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
-    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400 500;
-  font-display: swap;
-  src: url('/fuentes/jetbrains-mono-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
-    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  src: url('/fuentes/dm-sans-latin-700-normal.woff2') format('woff2');
 }
 
-/* Tokens «Terracota Clásica» (transcribir, web/src/estilos/_tokens.scss): oscuro por defecto; claro si el sistema lo pide y no
-   se eligió el oscuro, o si se eligió con el botón del tema (data-tema en <html>, tema.js). --cabecera es del panel. */
+/* Tokens de la marca Cénit (DESIGN.md, «Superficie: panel de Actas»): Noche & Oro por defecto; Bosque & Limón si el sistema
+   lo pide y no se eligió el oscuro, o si se eligió con el botón del tema (data-tema en <html>, tema.js). */
 :root {
-  --bg: #1a1820;
-  --surface: #24212c;
-  --surface2: #2c2836;
-  --accent-soft: #3a2e30;
-  --text: #f4ece6;
-  --muted: #c4b6b0;
-  --ink: #f2b596;
-  --accent: #c7663d;
-  --accent-dark: #e89870;
-  --accent-2: #a7b1f0;
-  --on-accent: #1a1820;
-  --line: rgba(232, 152, 112, 0.18);
-  --border-interactive: #9c7e74;
-  --pie-bg: #100e14;
-  --estado-en-linea: #7bd9a0;
-  --aviso: #e8c170;
-  --error: #f08a8a;
-  --hablante-terracota: var(--accent-dark);
-  --hablante-arandano: var(--accent-2);
-  --hablante-salvia: var(--estado-en-linea);
-  --hablante-ambar: var(--aviso);
-  --hablante-ciruela: #d9a7d6;
-  --hablante-pizarra: #a9c3d3;
-  --hablante-oliva: #c4cb8c;
-  --hablante-arena: #e6cba9;
-  --cabecera: #100e14;
+  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-sans: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --bg: #0e1512; /* noche */
+  --surface: rgba(247, 244, 238, 0.045); /* tarjeta-noche */
+  --surface2: #16201b; /* noche-alterna */
+  --accent-soft: rgba(201, 168, 76, 0.16); /* superficie-tintada-noche */
+  --text: #f7f4ee; /* marfil */
+  --muted: rgba(247, 244, 238, 0.7); /* marfil-suave */
+  --ink: #c9a84c; /* oro */
+  --accent-dark: #c9a84c; /* oro */
+  --accent-2: #a9c3d3; /* informacion-noche */
+  --on-accent: #0e1512; /* noche */
+  --line: rgba(201, 168, 76, 0.24); /* borde-noche */
+  --border-interactive: rgba(247, 244, 238, 0.6); /* marfil-tenue */
+  --estado-en-linea: #8fd0a3; /* exito-noche */
+  --aviso: #e8a85a; /* aviso-noche */
+  --error: #f2b8b5; /* peligro-noche */
+  --zenit: #c9a84c; /* punto cénit: oro */
+  --hablante-0: #8fd0a3;
+  --hablante-1: #e8a85a;
+  --hablante-2: #e89870;
+  --hablante-3: #a9c3d3;
+  --hablante-4: #c4cb8c;
+  --hablante-5: #e6a3b0;
+  --hablante-6: #e6cba9;
+  --hablante-7: #f7f4ee;
+  --cabecera: #1a2520; /* noche-franja */
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-tema='oscuro']) {
-    --bg: #fbf6f1;
-    --surface: #ffffff;
-    --surface2: #f5e9df;
-    --accent-soft: #f3ded0;
-    --text: #3a2c2a;
-    --muted: #6b5550;
-    --ink: #7a3a1f;
-    --accent: #c2683f;
-    --accent-dark: #9a4a28;
-    --accent-2: #3f4c8a;
+    --bg: #f2f4ef; /* niebla */
+    --surface: #ffffff; /* tarjeta */
+    --surface2: #e5e7e2; /* niebla-alterna */
+    --accent-soft: rgba(30, 122, 79, 0.1); /* superficie-tintada */
+    --text: #0f1d17; /* tinta */
+    --muted: rgba(17, 32, 26, 0.74); /* tinta-suave */
+    --ink: #1a6c46; /* bosque-tinta */
+    --accent-dark: #1e7a4f; /* bosque */
+    --accent-2: #2f5a7a; /* informacion */
     --on-accent: #ffffff;
-    --line: rgba(154, 74, 40, 0.16);
-    --border-interactive: #a86a4c;
-    --pie-bg: #7a3a1f;
-    --estado-en-linea: #186237;
+    --line: rgba(17, 32, 26, 0.14); /* borde */
+    --border-interactive: rgba(17, 32, 26, 0.66); /* tinta-tenue */
+    --estado-en-linea: #1a6c46; /* bosque-tinta */
     --aviso: #8a5a00;
-    --error: #b3261e;
-    --hablante-ciruela: #7b3f74;
-    --hablante-pizarra: #3d5567;
-    --hablante-oliva: #535e1d;
-    --hablante-arena: #77562f;
-    --cabecera: #ffffff;
+    --error: #b3261e; /* peligro */
+    --zenit: #e3d34a; /* punto cénit: limón */
+    --hablante-0: #1a6c46;
+    --hablante-1: #8a5a00;
+    --hablante-2: #a2431f;
+    --hablante-3: #2f5a7a;
+    --hablante-4: #535e1d;
+    --hablante-5: #8a3a4a;
+    --hablante-6: #6b4f2a;
+    --hablante-7: #0f1d17;
+    --cabecera: #d5d8d3; /* franja */
     color-scheme: light;
   }
 }
 
 :root[data-tema='claro'] {
-  --bg: #fbf6f1;
+  --bg: #f2f4ef;
   --surface: #ffffff;
-  --surface2: #f5e9df;
-  --accent-soft: #f3ded0;
-  --text: #3a2c2a;
-  --muted: #6b5550;
-  --ink: #7a3a1f;
-  --accent: #c2683f;
-  --accent-dark: #9a4a28;
-  --accent-2: #3f4c8a;
+  --surface2: #e5e7e2;
+  --accent-soft: rgba(30, 122, 79, 0.1);
+  --text: #0f1d17;
+  --muted: rgba(17, 32, 26, 0.74);
+  --ink: #1a6c46;
+  --accent-dark: #1e7a4f;
+  --accent-2: #2f5a7a;
   --on-accent: #ffffff;
-  --line: rgba(154, 74, 40, 0.16);
-  --border-interactive: #a86a4c;
-  --pie-bg: #7a3a1f;
-  --estado-en-linea: #186237;
+  --line: rgba(17, 32, 26, 0.14);
+  --border-interactive: rgba(17, 32, 26, 0.66);
+  --estado-en-linea: #1a6c46;
   --aviso: #8a5a00;
   --error: #b3261e;
-  --hablante-ciruela: #7b3f74;
-  --hablante-pizarra: #3d5567;
-  --hablante-oliva: #535e1d;
-  --hablante-arena: #77562f;
-  --cabecera: #ffffff;
+  --zenit: #e3d34a;
+  --hablante-0: #1a6c46;
+  --hablante-1: #8a5a00;
+  --hablante-2: #a2431f;
+  --hablante-3: #2f5a7a;
+  --hablante-4: #535e1d;
+  --hablante-5: #8a3a4a;
+  --hablante-6: #6b4f2a;
+  --hablante-7: #0f1d17;
+  --cabecera: #d5d8d3;
   color-scheme: light;
 }
 
@@ -159,20 +147,26 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 400 15px/1.55 Manrope, system-ui, sans-serif;
+  font: 400 15px/1.55 var(--font-sans);
   overflow-wrap: anywhere;
 }
 h1,
 h2,
 h3 {
   line-height: 1.2;
+  text-wrap: balance;
+}
+p,
+li,
+dd {
+  text-wrap: pretty;
 }
 h1 {
   margin: 0;
-  font: 400 40px/1.1 'Gilda Display', Georgia, serif;
+  font: 600 28px/1.1 var(--font-display);
 }
 h2 {
-  font-size: 18px;
+  font-size: 20px;
   margin: 1.2em 0 0.5em;
 }
 h3 {
@@ -195,14 +189,14 @@ main:focus {
 }
 .mono,
 time {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 0.92em;
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 mark {
   background: var(--aviso);
   color: var(--on-accent);
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0 2px;
 }
 .oculto {
@@ -222,7 +216,7 @@ mark {
   top: -100px;
   z-index: 10;
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--accent-dark);
   color: var(--on-accent);
   font-weight: 600;
@@ -294,10 +288,10 @@ mark {
   min-height: 44px;
   padding: 0 18px;
   border: 1px solid var(--border-interactive);
-  border-radius: 10px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text);
-  font: 600 15px Manrope, system-ui, sans-serif;
+  font: 600 15px var(--font-sans);
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
@@ -334,10 +328,10 @@ select {
   min-width: 0;
   padding: 0 14px;
   border: 1px solid var(--border-interactive);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg);
   color: var(--text);
-  font: 15px Manrope, system-ui, sans-serif;
+  font: 16px var(--font-sans);
 }
 input[type='search']::placeholder,
 input[type='text']::placeholder {
@@ -363,13 +357,13 @@ input[type='radio'] {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 20px;
-  max-width: 1200px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 12px 32px;
 }
 .marca {
-  font: 400 28px/1 'Gilda Display', Georgia, serif;
-  color: var(--ink);
+  font: 600 24px/1 var(--font-display);
+  color: var(--text);
   text-decoration: none;
 }
 .secciones {
@@ -393,6 +387,15 @@ input[type='radio'] {
   background: var(--surface2);
   color: var(--text);
 }
+/* El gesto de la marca: el punto cénit marca la sección activa (limón de día, oro de noche). Decorativo: aria-current ya lo dice. */
+.secciones a[aria-current]::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--zenit);
+}
 .buscador {
   display: flex;
   gap: 8px;
@@ -406,12 +409,12 @@ main {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1200px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 28px 32px 48px;
 }
 .pie {
-  max-width: 1200px;
+  max-width: 1180px;
   margin: 0 auto;
   padding: 0 32px 32px;
   color: var(--muted);
@@ -454,7 +457,7 @@ main {
   margin: 0;
   padding: 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--surface);
 }
 .aviso {
@@ -464,7 +467,7 @@ main {
   margin: 0;
   padding: 16px 20px;
   border: 1px solid var(--error);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--accent-soft);
   scroll-margin-top: 16px;
 }
@@ -507,7 +510,7 @@ main {
   position: relative; /* el texto .oculto de una celda (absoluto) se queda dentro del desplazamiento de la tabla */
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--surface);
 }
 table {
@@ -519,11 +522,9 @@ th {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.06em;
   text-align: left;
-  text-transform: uppercase;
 }
 td {
   padding: 14px 16px;
@@ -547,26 +548,25 @@ td .detalle {
   align-items: flex-start;
   gap: 20px;
 }
+/* Dos columnas iguales: la transcripción y el historial a un lado, los datos al otro (ninguna se alarga muy por debajo de la
+   otra); «Pedir ayuda a Claude» va debajo, a todo el ancho. Con menos de 880 px de contenido, una sola columna. */
 .principal {
   display: flex;
-  flex: 999 1 560px;
+  flex: 1 1 430px;
   flex-direction: column;
   gap: 20px;
   min-width: 0;
 }
 .lateral {
   display: flex;
-  flex: 1 1 300px;
+  flex: 1 1 430px;
   flex-direction: column;
   gap: 20px;
   min-width: 0;
 }
 .columnas h2 {
   margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 13px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 16px;
 }
 .segmentos {
   margin: 0;
@@ -595,28 +595,28 @@ td .detalle {
   font-weight: 700;
 }
 .h0 {
-  color: var(--hablante-terracota);
+  color: var(--hablante-0);
 }
 .h1 {
-  color: var(--hablante-arandano);
+  color: var(--hablante-1);
 }
 .h2 {
-  color: var(--hablante-salvia);
+  color: var(--hablante-2);
 }
 .h3 {
-  color: var(--hablante-ambar);
+  color: var(--hablante-3);
 }
 .h4 {
-  color: var(--hablante-ciruela);
+  color: var(--hablante-4);
 }
 .h5 {
-  color: var(--hablante-pizarra);
+  color: var(--hablante-5);
 }
 .h6 {
-  color: var(--hablante-oliva);
+  color: var(--hablante-6);
 }
 .h7 {
-  color: var(--hablante-arena);
+  color: var(--hablante-7);
 }
 .datos {
   display: grid;
@@ -754,7 +754,11 @@ td .detalle {
   font-weight: 600;
 }
 .informativo h2 {
-  font: 400 24px/1.2 'Gilda Display', Georgia, serif;
+  font: 600 24px/1.2 var(--font-display);
+}
+.informativo p,
+.informativo li {
+  max-width: 52ch;
 }
 fieldset {
   margin: 0 0 20px;
@@ -860,14 +864,18 @@ section > h2 {
 }
 #clave {
   color: var(--text);
-  font-size: 18px;
+  font-size: 17px;
   letter-spacing: 0.08em;
 }
 .mensaje h1 {
   margin-bottom: 12px;
-  font-size: 30px;
 }
 /* ── Compartir y «Copiar diagnóstico para Claude» (V5, V6) ───────────────────────────────────────────────────────────── */
+/* Fuera de las columnas, «Pedir ayuda a Claude» conserva el título de bloque que tenía dentro de ellas. */
+[aria-labelledby='t-claude'] > h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
 .preparado {
   display: flex;
   flex-direction: column;
@@ -884,10 +892,10 @@ section > h2 {
   min-width: 0;
   padding: 12px 14px;
   border: 1px solid var(--border-interactive);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.6 'JetBrains Mono', ui-monospace, monospace;
+  font: 13px/1.6 var(--font-mono);
   resize: vertical;
 }
 .opcion .detalle {
@@ -919,7 +927,7 @@ section > h2 {
     padding: 0 16px 24px;
   }
   h1 {
-    font-size: 30px;
+    font-size: 24px;
   }
   .tarjeta {
     padding: 16px;

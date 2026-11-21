@@ -268,7 +268,7 @@ def test_tope_de_peticiones_en_curso_salvo_la_sonda_y_los_estaticos():
                 estados["tercera"] = tercera.status_code
                 estados["reintentar"] = int(tercera.headers["retry-after"])
                 estados["salud"] = (await c.get("/salud")).status_code
-                estados["fuente"] = (await c.get("/fuentes/manrope-latin.woff2")).status_code
+                estados["fuente"] = (await c.get("/fuentes/dm-sans-latin-400-normal.woff2")).status_code
                 # Sin el secreto de Traefik, 401 aunque el tope esté lleno: la autenticación va antes que el 503.
                 estados["sin_credenciales"] = (await c.get("/buscar", headers={"x-actas-proxy": "otro"})).status_code
                 soltar.set()

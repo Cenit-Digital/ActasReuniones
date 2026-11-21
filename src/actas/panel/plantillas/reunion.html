@@ -85,7 +85,6 @@
 </ul>
 </section>
 {% endif %}
-{% if para_claude %}{% include "_para_claude.html" %}{% endif %}
 <section class="tarjeta" aria-labelledby="t-datos">
 <h2 id="t-datos">Datos</h2>
 <dl class="datos">
@@ -115,4 +114,5 @@
 </section>
 </aside>
 </div>
+{% if para_claude %}{% include "_para_claude.html" %}{% endif %}
 {% endblock %}
