@@ -277,3 +277,20 @@ def test_tope_de_peticiones_en_curso_salvo_la_sonda_y_los_estaticos():
     anyio.run(todas)
     esperados = {"tercera": 503, "reintentar": 1, "salud": 200, "fuente": 200, "sin_credenciales": 401}
     assert estados == {**esperados, "lenta1": 200, "lenta2": 200, "despues": 200}
+
+
+def test_sin_hash_o_sin_hosts_no_hay_servidor_mcp(entorno):
+    from actas.panel.__main__ import servidor_mcp
+
+    assert servidor_mcp(entorno) is None
+    assert servidor_mcp({**entorno, "ACTAS_MCP_TOKEN_SHA256": "ab" * 32}) is None
+    assert servidor_mcp({**entorno, "ACTAS_MCP_HOSTS": "actas-panel.actas.svc.cluster.local:8081"}) is None
+
+
+def test_el_servidor_mcp_va_en_el_8081_con_su_lifespan(entorno):
+    from actas.panel.__main__ import servidor_mcp
+
+    e = {**entorno, "ACTAS_MCP_TOKEN_SHA256": "AB" * 32, "ACTAS_MCP_HOSTS": "actas-panel.actas.svc.cluster.local:8081"}
+    c = servidor_mcp(e).config  # type: ignore[union-attr]
+    assert (c.host, c.port, c.lifespan, c.access_log, c.proxy_headers) == ("0.0.0.0", 8081, "on", False, False)  # noqa: S104
+    assert servidor_mcp({**e, "ACTAS_MCP_PUERTO": "9100"}).config.port == 9100  # type: ignore[union-attr]

@@ -419,6 +419,14 @@ class Repositorio:
             ).fetchall()
         return [_fila(f) for f in filas]
 
+    def auditar_mcp(self, herramienta: str, resultado: str, duracion_ms: int) -> None:
+        """ADR 0004: una fila por llamada del MCP; nunca los argumentos ni lo devuelto (migración 0010)."""
+        with self.conexion() as c:
+            c.execute(
+                "INSERT INTO auditoria_mcp (herramienta, resultado, duracion_ms) VALUES (%s, %s, %s)",
+                (herramienta, resultado, duracion_ms),
+            )
+
     def reintentar(self, rid: str) -> bool:
         """Una reunión en `error` vuelve a `grabada` para enviar otra vez su audio (si aún existe)."""
         try:

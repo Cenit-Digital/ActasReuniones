@@ -9,6 +9,9 @@ ACTAS_SECRETO_PROXY_FICHERO  fichero con el secreto que la ruta de Traefik añad
 ACTAS_ORIGEN              el origen del panel para la defensa CSRF (por defecto https://actas.cenitdigital.es)
 ACTAS_PANEL_PUERTO        8080
 ACTAS_PANEL_CONCURRENCIA  16 peticiones en curso a la vez, sin contar /salud (503 por encima; las cuenta el panel, no uvicorn)
+ACTAS_MCP_TOKEN_SHA256    SHA-256 (hexadecimal) del Bearer del MCP de solo lectura (ADR 0004); lo emite `actas.mcp_token`
+ACTAS_MCP_HOSTS           los Host admitidos en el MCP, con puerto, separados por comas. Sin el hash o sin los hosts, no hay MCP
+ACTAS_MCP_PUERTO          8081, el del MCP (el 8080 es el de Traefik y no lo sirve)
 ACTAS_PANEL_CONEXIONES    4 consultas a la base a la vez, una conexión cada una: por debajo del CONNECTION LIMIT de actas_panel
 
 uvicorn 0.54.0, docs/settings.md: `--no-access-log` («Disable access log only»), `--no-server-header`, `--no-proxy-headers` (el
@@ -16,9 +19,12 @@ panel no usa la IP de origen) y `--limit-concurrency` («Maximum number of concu
 issuing HTTP 503 responses»), aquí con sus equivalentes de `uvicorn.Config`.
 """
 
+import asyncio
+import contextlib
 import os
+import signal
 import sys
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +33,7 @@ from starlette.types import ASGIApp
 
 from actas.base import Repositorio
 from actas.formulario import version_vigente
+from actas.mcp_servidor import crear_app_mcp
 from actas.panel import cargar_textos, crear_app
 from actas.registro import Registro
 from actas.salas import clave_maestra
@@ -67,10 +74,67 @@ def configuracion(app: Any, e: Mapping[str, str]) -> uvicorn.Config:
     )
 
 
+class Servidor(uvicorn.Server):
+    """uvicorn instala sus manejadores de señales al servir y el segundo pisaría al primero: aquí no los instala nadie y un único
+    manejador de SIGTERM y SIGINT (`servir`) pide la parada ordenada a los dos."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None, None, None]:
+        yield
+
+
+def servidor_mcp(e: Mapping[str, str]) -> Servidor | None:
+    """El servidor del puerto del MCP, o None sin hash o sin hosts. Va aparte del panel y sin su guardia (Traefik no llega)."""
+    sha = (e.get("ACTAS_MCP_TOKEN_SHA256") or "").strip().lower()
+    hosts = tuple(h.strip().lower() for h in (e.get("ACTAS_MCP_HOSTS") or "").split(",") if h.strip())
+    if not sha or not hosts:
+        return None
+    return Servidor(
+        uvicorn.Config(
+            crear_app_mcp(Repositorio(e["ACTAS_DSN"], ajustes=AJUSTES), hosts, sha),
+            host="0.0.0.0",  # noqa: S104 — dentro del pod; la NetworkPolicy solo deja entrar a Hermes
+            port=int(e.get("ACTAS_MCP_PUERTO", "8081")),
+            access_log=False,
+            server_header=False,
+            proxy_headers=False,
+            lifespan="on",  # ejecuta el gestor de sesiones del SDK
+            log_config=None,
+        )
+    )
+
+
+async def servir(servidores: Sequence[Servidor]) -> None:
+    """Los servidores en un mismo bucle: SIGTERM los para a todos y si uno acaba (o falla), para a los demás."""
+    bucle = asyncio.get_running_loop()
+
+    def parar() -> None:
+        for servidor in servidores:
+            servidor.should_exit = True
+
+    for senal in (signal.SIGTERM, signal.SIGINT):
+        bucle.add_signal_handler(senal, parar)
+
+    async def uno(servidor: Servidor) -> None:
+        try:
+            await servidor.serve()
+        finally:
+            parar()
+
+    resultados = await asyncio.gather(*(uno(s) for s in servidores), return_exceptions=True)
+    for r in resultados:
+        if isinstance(r, BaseException):
+            raise r
+
+
 def main() -> None:
     app, registro = preparar(os.environ)
     registro("panel en marcha")
-    uvicorn.Server(configuracion(app, os.environ)).run()
+    servidores = [Servidor(configuracion(app, os.environ))]
+    mcp = servidor_mcp(os.environ)
+    if mcp is not None:
+        servidores.append(mcp)
+        registro("mcp activado")
+    asyncio.run(servir(servidores))
 
 
 def principal() -> None:

@@ -4,9 +4,11 @@
 # contenedor (imagen oficial de Playwright por digest), sin ningún Secret. Raíz de solo lectura, sin capacidades y con usuario
 # sin privilegios (lo fija también el pod).
 
-# Python 3.12.16, manifiesto linux/amd64. La base aún no incorpora la corrección de zlib de Debian DSA-6613-1.
+# Python 3.12.16, manifiesto linux/amd64. La base aún no incorpora la corrección de zlib de Debian DSA-6613-1 ni la de libzstd1
+# (CVE-2026-124851, HIGH, arreglada en -1+deb13u1; trivy de la CI lo marca desde el 2026-11-25).
 FROM docker.io/library/python:3.12-slim-trixie@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177 AS base
 RUN apt-get update && apt-get install -y --no-install-recommends zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
+    libzstd1=1.5.7+dfsg-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS construir
