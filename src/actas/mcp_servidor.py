@@ -16,6 +16,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.streamable_http_manager import StreamableHTTPASGIApp
@@ -32,6 +33,11 @@ log = logging.getLogger("actas.mcp")
 
 MAX_CUERPO = 64 * 1024
 SOLO_LECTURA = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
+
+
+# `Repositorio` abre una conexión por operación y el rol del panel tiene su CONNECTION LIMIT: el MCP no hace más de dos llamadas
+# a la vez (cada una, entre 2 y 3 conexiones seguidas).
+LIMITE_LLAMADAS = 2
 
 
 async def _ejecutar(repo: Repositorio, herramienta: str, consulta: Callable[[Repositorio], dict[str, Any]]) -> str:
@@ -62,6 +68,14 @@ async def _ejecutar(repo: Repositorio, herramienta: str, consulta: Callable[[Rep
 
 
 def crear_servidor(repo: Repositorio) -> MCPServer:
+    limitador: list[anyio.CapacityLimiter] = []  # uno por servidor y dentro de su bucle: se crea en la primera llamada
+
+    async def ejecutar(herramienta: str, consulta: Callable[[Repositorio], dict[str, Any]]) -> str:
+        if not limitador:
+            limitador.append(anyio.CapacityLimiter(LIMITE_LLAMADAS))
+        async with limitador[0]:
+            return await _ejecutar(repo, herramienta, consulta)
+
     servidor = MCPServer(
         "actas",
         instructions=(
@@ -77,7 +91,7 @@ def crear_servidor(repo: Repositorio) -> MCPServer:
         structured_output=False,
     )
     async def listar_reuniones(estado: str | None = None, pagina: int = 1) -> str:
-        return await _ejecutar(repo, "listar_reuniones", lambda r: lectura.listar_reuniones(r, estado, pagina))
+        return await ejecutar("listar_reuniones", lambda r: lectura.listar_reuniones(r, estado, pagina))
 
     @servidor.tool(
         name="leer_acta",
@@ -89,7 +103,7 @@ def crear_servidor(repo: Repositorio) -> MCPServer:
         structured_output=False,
     )
     async def leer_acta(reunion_id: str, desde: int = 0) -> str:
-        return await _ejecutar(repo, "leer_acta", lambda r: lectura.leer_acta(r, reunion_id, desde))
+        return await ejecutar("leer_acta", lambda r: lectura.leer_acta(r, reunion_id, desde))
 
     @servidor.tool(
         name="buscar_en_actas",
@@ -98,7 +112,7 @@ def crear_servidor(repo: Repositorio) -> MCPServer:
         structured_output=False,
     )
     async def buscar_en_actas(consulta: str) -> str:
-        return await _ejecutar(repo, "buscar_en_actas", lambda r: lectura.buscar_en_actas(r, consulta))
+        return await ejecutar("buscar_en_actas", lambda r: lectura.buscar_en_actas(r, consulta))
 
     return servidor
 

@@ -11,7 +11,6 @@ no se reintenta desde cada posición de una racha de letras o de dígitos, y tod
 
 from __future__ import annotations
 
-import html
 import re
 
 MARCA_CORREO = "[correo]"
@@ -32,13 +31,18 @@ _CORREO = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 # Espacios (también el duro y los finos), punto, guion, raya, barra y paréntesis.
-_SEPARADOR = r"[\s\N{NO-BREAK SPACE}\N{THIN SPACE}\N{NARROW NO-BREAK SPACE}.\-\N{EN DASH}/()]"
+_SEPARADOR = (
+    r"[\s\N{NO-BREAK SPACE}\N{THIN SPACE}\N{NARROW NO-BREAK SPACE}.\-\N{EN DASH}\N{EM DASH}\N{NON-BREAKING HYPHEN}"
+    r"\N{FIGURE DASH}\N{MINUS SIGN}_/()]"
+)
 # Dígitos con separadores; prefijo «+» o «00» opcional.
 _TELEFONO = re.compile(r"(?<!\d)(?:\+|00)?\(?\d(?:" + _SEPARADOR + r"{0,3}\d){6,18}\)?(?!\d)")
 # Cifras sueltas dictadas («6, 1, 2, 3…», como las escribe Whisper): una coma solo une cifras sueltas, para
 # que una lista de importes («1500, 2000, 3000») no se tome por un teléfono.
 _DICTADO = re.compile(r"(?<!\d)\d(?:[,.]?[ \N{NO-BREAK SPACE}]\d(?!\d)){8,18}")
-_MARCA = re.compile(r"</?mark>")
+# Grupos de tres cifras con comas o punto y coma («612, 345, 678»): solo de tres, para no tomar por teléfono una lista de
+# importes o de números sueltos.
+_GRUPOS = re.compile(r"(?<!\d)(?:\+|00)?\(?\d{3}(?:[,;]\s?\d{3}){2,5}\)?(?!\d)")
 _RELLENO = r"[\s.,/\-\N{EN DASH}()+]"
 _BORDE_INICIAL = re.compile(r"^" + _RELLENO + r"*\d[\d\s.,/\-\N{EN DASH}()+]{0,40}")
 _BORDE_FINAL = re.compile(r"[\d\s.,/\-\N{EN DASH}()+]{0,40}\d" + _RELLENO + r"*$")
@@ -58,19 +62,18 @@ def _telefono(m: re.Match[str]) -> str:
 def enmascarar(texto: str, maximo: int | None = None) -> str:
     """Correos fuera y teléfonos a sus 3 últimos dígitos; con `maximo`, recorta el resultado."""
     salida = _CORREO.sub(MARCA_CORREO, texto)
-    salida = _DICTADO.sub(_telefono, _TELEFONO.sub(_telefono, salida))
+    salida = _DICTADO.sub(_telefono, _GRUPOS.sub(_telefono, _TELEFONO.sub(_telefono, salida)))
     if maximo is not None and len(salida) > maximo:
         salida = salida[:maximo] + "…"
     return salida
 
 
-def coincidencia_limpia(fragmento: str, maximo: int | None = None) -> str:
-    """Fragmento de `ts_headline` (HTML escapado y con `<mark>`) a texto plano y enmascarado.
+def recortar_bordes(texto: str, maximo: int | None = None) -> str:
+    """Un fragmento de búsqueda ya en texto plano, enmascarado.
 
-    - Se quitan las marcas ANTES de enmascarar: «<mark>612</mark> 345 678» no se reconocería como teléfono.
-    - `ts_headline` corta por palabras: un número cortado en el borde («345 678 …») ya no llega a 9 dígitos y
-      no se reconocería. Lo que queda de cifras en los bordes, tras enmascarar lo completo, se descarta."""
-    texto = enmascarar(html.unescape(_MARCA.sub("", fragmento)))
+    `ts_headline` corta por palabras: un número cortado en el borde («345 678 …») ya no llega a 9 cifras y no se
+    reconocería. Lo que queda de cifras en los bordes, tras enmascarar lo completo, se descarta."""
+    texto = enmascarar(texto)
     texto = _BORDE_INICIAL.sub("… ", texto, count=1) if _BORDE_INICIAL.match(texto) else texto
     texto = _BORDE_FINAL.sub(" …", texto, count=1) if _BORDE_FINAL.search(texto) else texto
     if maximo is not None and len(texto) > maximo:

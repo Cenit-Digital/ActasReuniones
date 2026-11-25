@@ -138,7 +138,23 @@ def test_buscar_limpia_centinelas_y_enmascara() -> None:
 
 
 @pytest.mark.parametrize(
-    "consulta", ["612", "ana@mail.com", "ana arroba mail", "6 1 2", "61234", "tel 612345678", "ARROBA", "", "   "]
+    "consulta",
+    [
+        "612",
+        "ana@mail.com",
+        "ana arroba mail",
+        "6 1 2",
+        "61234",
+        "tel 612345678",
+        "ARROBA",
+        "",
+        "   ",
+        '"6, 1, 2"',
+        "6,1,2",
+        "6;1;2",
+        "6_1_2",
+        "6 1 2 3",
+    ],
 )
 def test_buscar_rechaza_vacias_y_oraculos(consulta: str) -> None:
     with pytest.raises(lm.ConsultaNoValida):
@@ -153,3 +169,10 @@ def test_buscar_admite_palabras_anos_y_numeros_cortos(consulta: str) -> None:
 def test_los_topes_son_los_documentados() -> None:
     assert (lm.MAX_REUNIONES, lm.MAX_BUSQUEDA, lm.MAX_SEGMENTOS, lm.MAX_CARACTERES) == (25, 20, 200, 20_000)
     assert (lm.MAX_TEXTO, lm.MAX_TITULO, lm.MAX_MOTIVO, lm.MAX_PAGINA) == (2_000, 200, 200, 10_000)
+
+
+def test_dos_cifras_si_y_tres_no_y_los_anos_no_cuentan() -> None:
+    assert lm.buscar_en_actas(Repo(), "sala 12")["total"] == 1
+    assert lm.buscar_en_actas(Repo(), "acta 2026 sala 12")["total"] == 1
+    with pytest.raises(lm.ConsultaNoValida):
+        lm.buscar_en_actas(Repo(), "sala 123")

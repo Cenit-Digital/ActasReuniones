@@ -15,7 +15,7 @@ from typing import Any
 
 from actas import busqueda, presentacion
 from actas.base import es_uuid
-from actas.enmascarar import coincidencia_limpia, enmascarar
+from actas.enmascarar import enmascarar, recortar_bordes
 from actas.estados import Estado
 
 Fila = dict[str, Any]
@@ -32,7 +32,8 @@ DESCONOCIDO = "Socio"
 
 _ESTADOS = frozenset(e.value for e in Estado)
 _ANO = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-_ORACULO = re.compile(r"@|arroba|\d(?:[\s.\-/]{0,3}\d){2,}", re.IGNORECASE)
+_ARROBA = re.compile(r"@|arroba", re.IGNORECASE)
+MAX_CIFRAS = 2  # cifras que admite una búsqueda, sin contar los años
 
 
 class NoEncontrada(Exception):
@@ -130,15 +131,16 @@ def _limpiar(fragmento: str) -> str:
     texto = fragmento.translate(dict.fromkeys(map(ord, busqueda.INICIO + busqueda.FIN)))
     for original, sustituto in busqueda.SUSTITUTOS.items():
         texto = texto.replace(sustituto, original)
-    return coincidencia_limpia(texto, MAX_TEXTO)
+    return recortar_bordes(texto, MAX_TEXTO)
 
 
 def buscar_en_actas(repo: Any, consulta: str) -> Fila:
     q = busqueda.normalizar(consulta)
     if q is None:
         raise ConsultaNoValida("La consulta no puede estar vacía")
-    if _ORACULO.search(_ANO.sub("", q)):
-        raise ConsultaNoValida("La búsqueda no admite correos ni números de más de dos cifras (salvo años)")
+    sin_anos = _ANO.sub("", q)
+    if _ARROBA.search(sin_anos) or sum(c.isdigit() for c in sin_anos) > MAX_CIFRAS:
+        raise ConsultaNoValida("La búsqueda no admite correos ni más de dos cifras (salvo años)")
     conocidos = {s["push"]: s["nombre"] for s in repo.socios()}
     filas = repo.buscar(q, MAX_BUSQUEDA, busqueda.QUITAR, busqueda.PONER, busqueda.OPCIONES)
     return {

@@ -11,6 +11,6 @@ CREATE TABLE IF NOT EXISTS auditoria_mcp (
 );
 CREATE INDEX IF NOT EXISTS auditoria_mcp_momento ON auditoria_mcp (momento);
 
--- El panel (que aloja el MCP) solo inserta; nadie modifica ni borra una fila (la limpia el dueño). actas_app no la toca.
+-- El panel (que aloja el MCP) solo inserta, y solo esas tres columnas (el resto, por defecto: el momento lo pone la base); nadie modifica ni borra una fila (la limpia el dueño). actas_app no la toca.
 REVOKE ALL ON auditoria_mcp FROM PUBLIC, actas_app, actas_panel;
-GRANT INSERT ON auditoria_mcp TO actas_panel;
+GRANT INSERT (herramienta, resultado, duracion_ms) ON auditoria_mcp TO actas_panel;

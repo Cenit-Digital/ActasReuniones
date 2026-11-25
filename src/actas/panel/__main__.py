@@ -19,10 +19,12 @@ panel no usa la IP de origen) y `--limit-concurrency` («Maximum number of concu
 issuing HTTP 503 responses»), aquí con sus equivalentes de `uvicorn.Config`.
 """
 
+import asyncio
+import contextlib
 import os
+import signal
 import sys
-import threading
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +74,22 @@ def configuracion(app: Any, e: Mapping[str, str]) -> uvicorn.Config:
     )
 
 
-def servidor_mcp(e: Mapping[str, str]) -> uvicorn.Server | None:
+class Servidor(uvicorn.Server):
+    """uvicorn instala sus manejadores de señales al servir y el segundo pisaría al primero: aquí no los instala nadie y un único
+    manejador de SIGTERM y SIGINT (`servir`) pide la parada ordenada a los dos."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Generator[None, None, None]:
+        yield
+
+
+def servidor_mcp(e: Mapping[str, str]) -> Servidor | None:
     """El servidor del puerto del MCP, o None sin hash o sin hosts. Va aparte del panel y sin su guardia (Traefik no llega)."""
     sha = (e.get("ACTAS_MCP_TOKEN_SHA256") or "").strip().lower()
     hosts = tuple(h.strip().lower() for h in (e.get("ACTAS_MCP_HOSTS") or "").split(",") if h.strip())
     if not sha or not hosts:
         return None
-    return uvicorn.Server(
+    return Servidor(
         uvicorn.Config(
             crear_app_mcp(Repositorio(e["ACTAS_DSN"], ajustes=AJUSTES), hosts, sha),
             host="0.0.0.0",  # noqa: S104 — dentro del pod; la NetworkPolicy solo deja entrar a Hermes
@@ -92,23 +103,38 @@ def servidor_mcp(e: Mapping[str, str]) -> uvicorn.Server | None:
     )
 
 
+async def servir(servidores: Sequence[Servidor]) -> None:
+    """Los servidores en un mismo bucle: SIGTERM los para a todos y si uno acaba (o falla), para a los demás."""
+    bucle = asyncio.get_running_loop()
+
+    def parar() -> None:
+        for servidor in servidores:
+            servidor.should_exit = True
+
+    for senal in (signal.SIGTERM, signal.SIGINT):
+        bucle.add_signal_handler(senal, parar)
+
+    async def uno(servidor: Servidor) -> None:
+        try:
+            await servidor.serve()
+        finally:
+            parar()
+
+    resultados = await asyncio.gather(*(uno(s) for s in servidores), return_exceptions=True)
+    for r in resultados:
+        if isinstance(r, BaseException):
+            raise r
+
+
 def main() -> None:
     app, registro = preparar(os.environ)
     registro("panel en marcha")
-    panel = uvicorn.Server(configuracion(app, os.environ))
+    servidores = [Servidor(configuracion(app, os.environ))]
     mcp = servidor_mcp(os.environ)
-    hilo = None
     if mcp is not None:
-        # uvicorn solo instala las señales en el hilo principal: el panel las atiende y, al salir, para el MCP.
-        hilo = threading.Thread(target=mcp.run, name="mcp", daemon=True)
-        hilo.start()
-        registro("mcp en marcha")
-    try:
-        panel.run()
-    finally:
-        if mcp is not None and hilo is not None:
-            mcp.should_exit = True
-            hilo.join(timeout=10)
+        servidores.append(mcp)
+        registro("mcp activado")
+    asyncio.run(servir(servidores))
 
 
 def principal() -> None:

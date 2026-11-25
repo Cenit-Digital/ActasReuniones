@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from actas.enmascarar import coincidencia_limpia, enmascarar
+from actas.enmascarar import enmascarar, recortar_bordes
 
 
 @pytest.mark.parametrize(
@@ -55,16 +55,6 @@ def test_lo_que_no_es_correo_ni_telefono_no_se_toca(entrada: str) -> None:
 
 def test_los_nombres_de_los_socios_se_dejan() -> None:
     assert enmascarar("Andrés y Roberto aprueban") == "Andrés y Roberto aprueban"
-
-
-def test_un_telefono_partido_por_la_marca_de_busqueda_tambien_se_enmascara() -> None:
-    # ts_headline devuelve «<mark>612</mark> 345 678» y el texto va escapado en HTML.
-    assert coincidencia_limpia("llama al <mark>612</mark> 345 678 &amp; vuelve") == "llama al ···678 & vuelve"
-
-
-def test_coincidencia_sin_html_ni_correo() -> None:
-    sucia = "&lt;b&gt;escribe&lt;/b&gt; a <mark>ana</mark>@mail.com"
-    assert coincidencia_limpia(sucia) == "<b>escribe</b> a [correo]"
 
 
 def test_texto_largo_se_trunca_con_marca() -> None:
@@ -136,14 +126,14 @@ def test_el_enmascarado_es_lineal_con_textos_largos(c: str) -> None:
 @pytest.mark.parametrize(
     ("fragmento", "esperado"),
     [
-        ("345 678 <mark>presupuesto</mark>", "… presupuesto"),
-        ("dijo <mark>presupuesto</mark> 612 345", "dijo presupuesto …"),
-        ("su 2026 fue <mark>bueno</mark>", "su 2026 fue bueno"),
-        ("llama al 612 345 678 <mark>hoy</mark>", "llama al ···678 hoy"),
+        ("345 678 presupuesto", "… presupuesto"),
+        ("dijo presupuesto 612 345", "dijo presupuesto …"),
+        ("su 2026 fue bueno", "su 2026 fue bueno"),
+        ("llama al 612 345 678 hoy", "llama al ···678 hoy"),
     ],
 )
 def test_un_fragmento_cortado_no_deja_trozos_de_numero(fragmento: str, esperado: str) -> None:
-    assert coincidencia_limpia(fragmento) == esperado
+    assert recortar_bordes(fragmento) == esperado
 
 
 # ── Bordes que fijan los topes y las banderas ────────────────────────────────────────────────────────
@@ -157,21 +147,21 @@ def test_mayusculas_en_las_palabras_de_correo() -> None:
 def test_el_tope_exacto_no_añade_puntos_suspensivos() -> None:
     assert enmascarar("a" * 10, maximo=10) == "a" * 10
     assert enmascarar("a" * 11, maximo=10) == "a" * 10 + "…"
-    assert coincidencia_limpia("a" * 10, maximo=10) == "a" * 10
-    assert coincidencia_limpia("a" * 11, maximo=10) == "a" * 10 + "…"
+    assert recortar_bordes("a" * 10, maximo=10) == "a" * 10
+    assert recortar_bordes("a" * 11, maximo=10) == "a" * 10 + "…"
 
 
 def test_sin_tope_no_recorta() -> None:
-    assert enmascarar("a" * 5000) == "a" * 5000 and coincidencia_limpia("a" * 5000) == "a" * 5000
+    assert enmascarar("a" * 5000) == "a" * 5000 and recortar_bordes("a" * 5000) == "a" * 5000
 
 
 def test_el_fragmento_sin_cifras_en_los_bordes_queda_igual() -> None:
-    assert coincidencia_limpia("hola <mark>mundo</mark>") == "hola mundo"
+    assert recortar_bordes("hola mundo") == "hola mundo"
 
 
 def test_por_debajo_del_tope_no_se_toca() -> None:
     assert enmascarar("a" * 5, maximo=10) == "a" * 5
-    assert coincidencia_limpia("a" * 5, maximo=10) == "a" * 5
+    assert recortar_bordes("a" * 5, maximo=10) == "a" * 5
 
 
 @pytest.mark.parametrize(
@@ -185,3 +175,23 @@ def test_una_fecha_con_hora_no_es_un_telefono(texto: str) -> None:
 def test_un_telefono_pegado_a_una_fecha_sigue_enmascarado() -> None:
     salida = enmascarar("2026-11-25 612345678")  # se enmascara todo el tramo: la fecha se pierde, el teléfono no sale
     assert salida == "···678" and "612345" not in salida
+
+
+@pytest.mark.parametrize(
+    "entrada",
+    [
+        "llama al 612, 345, 678",
+        "llama al 612; 345; 678",
+        "612\u2011345\u2011678",
+        "612\u2014345\u2014678",
+        "612\u2212345\u2212678",
+        "612_345_678",
+    ],
+)
+def test_mas_formas_de_telefono(entrada: str) -> None:
+    assert sum(c.isdigit() for c in enmascarar(entrada)) == 3 and "···678" in enmascarar(entrada)
+
+
+def test_una_lista_de_numeros_de_tres_cifras_con_comas_solo_si_son_nueve() -> None:
+    assert enmascarar("hay 120, 130 y 140") == "hay 120, 130 y 140"
+    assert enmascarar("importes 100, 200") == "importes 100, 200"
