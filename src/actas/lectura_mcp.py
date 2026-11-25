@@ -29,6 +29,8 @@ MAX_TITULO = 200
 MAX_MOTIVO = 200
 MAX_PAGINA = 10_000
 DESCONOCIDO = "Socio"
+# Alias de módulo: si se muta, la importación falla (a diferencia de una anotación, que no se evalúa).
+Texto = str | None
 
 _ESTADOS = frozenset(e.value for e in Estado)
 _ANO = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
@@ -44,7 +46,7 @@ class ConsultaNoValida(Exception):
     """Un argumento fuera de las reglas; el mensaje es fijo y se enseña al agente."""
 
 
-def _fecha(valor: Any) -> str | None:
+def _fecha(valor: Any) -> Texto:
     return valor.isoformat() if valor is not None else None
 
 
@@ -72,7 +74,7 @@ def _tope(valor: int) -> int:
     return min(max(valor, 1), MAX_PAGINA)
 
 
-def listar_reuniones(repo: Any, estado: str | None, pagina: int) -> Fila:
+def listar_reuniones(repo: Any, estado: Texto, pagina: int) -> Fila:
     """Las últimas reuniones (el panel enseña 100): `pagina` de 25 sobre ellas."""
     if estado is not None and estado not in _ESTADOS:
         raise ConsultaNoValida("Estado no válido")

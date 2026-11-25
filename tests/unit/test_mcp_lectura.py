@@ -176,3 +176,46 @@ def test_dos_cifras_si_y_tres_no_y_los_anos_no_cuentan() -> None:
     assert lm.buscar_en_actas(Repo(), "acta 2026 sala 12")["total"] == 1
     with pytest.raises(lm.ConsultaNoValida):
         lm.buscar_en_actas(Repo(), "sala 123")
+
+
+# ── Bordes que fijan topes y paginación ──────────────────────────────────────────────────────────────
+
+
+class RepoMuchas(Repo):
+    def ultimas(self, limite: int) -> list[dict[str, Any]]:
+        return [reunion(id=f"{n:08d}-0000-0000-0000-000000000000", estado="transcrita") for n in range(60)]
+
+
+def test_listar_pagina_de_25_en_25() -> None:
+    p1, p2, p3 = (lm.listar_reuniones(RepoMuchas(), None, n) for n in (1, 2, 3))
+    assert [len(p["reuniones"]) for p in (p1, p2, p3)] == [25, 25, 10] and p1["total"] == 60
+    assert p2["reuniones"][0]["id"].startswith("00000025") and p3["reuniones"][0]["id"].startswith("00000050")
+
+
+def test_la_pagina_cero_o_negativa_es_la_primera() -> None:
+    assert lm.listar_reuniones(Repo(), None, 0)["pagina"] == 1
+    assert lm.listar_reuniones(Repo(), None, -5)["pagina"] == 1
+
+
+def test_el_filtro_por_estado_deja_solo_ese_estado() -> None:
+    r = lm.listar_reuniones(Repo(), "transcrita", 1)
+    assert r["total"] == 1 and r["reuniones"][0]["estado"] == "transcrita"
+
+
+def test_los_nombres_de_socio_se_recortan_a_64() -> None:
+    larga = "n" * 100
+    repo = Repo([seg(0, "x")])
+    repo.socios = lambda: [{"push": "pablo123", "nombre": larga, "activo": True}]  # type: ignore[method-assign]
+    assert len(lm.leer_acta(repo, RID, 0)["segmentos"][0]["hablante"]) == 65
+    assert len(lm.reunion_mcp(reunion(), {"pablo123": larga})["socios"][0]) == 65
+    assert len(lm.buscar_en_actas(repo, "presupuesto")["resultados"][0]["hablante"]) == 65
+
+
+def test_el_tope_se_suma_y_no_se_combina_con_un_o() -> None:
+    p = lm.leer_acta(Repo([seg(n, "t" * 1023) for n in range(30)]), RID, 0)
+    assert len(p["segmentos"]) == 19 and p["siguiente"] == 19  # 19 × 1 023 = 19 437; el 20.º llegaría a 20 460
+
+
+def test_el_tope_exacto_no_deja_pasar_un_caracter_mas() -> None:
+    p = lm.leer_acta(Repo([*[seg(n, "t" * 1000) for n in range(20)], seg(20, "x")]), RID, 0)
+    assert len(p["segmentos"]) == 20 and p["siguiente"] == 20
