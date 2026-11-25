@@ -16,6 +16,7 @@ dependencies = [
     "anyio==4.15.1",
     # Salas de V2 (KubernetesInfrastructure#298, ADR 0023 D3): AES-GCM de la contraseña de cada sala. 50.0.2, del 2026-09-30.
     "cryptography==50.0.2",
+    "mcp==2.3.0",
 ]
 
 [dependency-groups]

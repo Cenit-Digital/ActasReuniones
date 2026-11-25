@@ -9,6 +9,9 @@ ACTAS_SECRETO_PROXY_FICHERO  fichero con el secreto que la ruta de Traefik añad
 ACTAS_ORIGEN              el origen del panel para la defensa CSRF (por defecto https://actas.cenitdigital.es)
 ACTAS_PANEL_PUERTO        8080
 ACTAS_PANEL_CONCURRENCIA  16 peticiones en curso a la vez, sin contar /salud (503 por encima; las cuenta el panel, no uvicorn)
+ACTAS_MCP_TOKEN_SHA256    SHA-256 (hexadecimal) del Bearer del MCP de solo lectura (ADR 0004); lo emite `actas.mcp_token`
+ACTAS_MCP_HOSTS           los Host admitidos en el MCP, con puerto, separados por comas. Sin el hash o sin los hosts, no hay MCP
+ACTAS_MCP_PUERTO          8081, el del MCP (el 8080 es el de Traefik y no lo sirve)
 ACTAS_PANEL_CONEXIONES    4 consultas a la base a la vez, una conexión cada una: por debajo del CONNECTION LIMIT de actas_panel
 
 uvicorn 0.54.0, docs/settings.md: `--no-access-log` («Disable access log only»), `--no-server-header`, `--no-proxy-headers` (el
@@ -18,6 +21,7 @@ issuing HTTP 503 responses»), aquí con sus equivalentes de `uvicorn.Config`.
 
 import os
 import sys
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -27,6 +31,7 @@ from starlette.types import ASGIApp
 
 from actas.base import Repositorio
 from actas.formulario import version_vigente
+from actas.mcp_servidor import crear_app_mcp
 from actas.panel import cargar_textos, crear_app
 from actas.registro import Registro
 from actas.salas import clave_maestra
@@ -67,10 +72,43 @@ def configuracion(app: Any, e: Mapping[str, str]) -> uvicorn.Config:
     )
 
 
+def servidor_mcp(e: Mapping[str, str]) -> uvicorn.Server | None:
+    """El servidor del puerto del MCP, o None sin hash o sin hosts. Va aparte del panel y sin su guardia (Traefik no llega)."""
+    sha = (e.get("ACTAS_MCP_TOKEN_SHA256") or "").strip().lower()
+    hosts = tuple(h.strip().lower() for h in (e.get("ACTAS_MCP_HOSTS") or "").split(",") if h.strip())
+    if not sha or not hosts:
+        return None
+    return uvicorn.Server(
+        uvicorn.Config(
+            crear_app_mcp(Repositorio(e["ACTAS_DSN"], ajustes=AJUSTES), hosts, sha),
+            host="0.0.0.0",  # noqa: S104 — dentro del pod; la NetworkPolicy solo deja entrar a Hermes
+            port=int(e.get("ACTAS_MCP_PUERTO", "8081")),
+            access_log=False,
+            server_header=False,
+            proxy_headers=False,
+            lifespan="on",  # ejecuta el gestor de sesiones del SDK
+            log_config=None,
+        )
+    )
+
+
 def main() -> None:
     app, registro = preparar(os.environ)
     registro("panel en marcha")
-    uvicorn.Server(configuracion(app, os.environ)).run()
+    panel = uvicorn.Server(configuracion(app, os.environ))
+    mcp = servidor_mcp(os.environ)
+    hilo = None
+    if mcp is not None:
+        # uvicorn solo instala las señales en el hilo principal: el panel las atiende y, al salir, para el MCP.
+        hilo = threading.Thread(target=mcp.run, name="mcp", daemon=True)
+        hilo.start()
+        registro("mcp en marcha")
+    try:
+        panel.run()
+    finally:
+        if mcp is not None and hilo is not None:
+            mcp.should_exit = True
+            hilo.join(timeout=10)
 
 
 def principal() -> None:

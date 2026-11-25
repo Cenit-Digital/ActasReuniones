@@ -19,6 +19,7 @@ Reglas que no se negocian:
 | Ruta | Qué contiene |
 | --- | --- |
 | `src/actas/` | Módulos puros (`pistas`, `conformidad`, `estados`, `purga`, `sondeo`, `registro`, `aviso`, `transcripcion`, `salas`, `enlaces`, `eventos` y, del panel, `origen`, `formulario`, `busqueda`, `presentacion`, `diagnostico`, `compartir`, `para_claude`) y adaptadores (`cdp`, `grabador`, `base`, `plataforma`, `metricas`), el bucle del supervisor (`supervisor`, `__main__`), las órdenes de `actas.sh` (`cli`) y el panel de F2 (`panel/`, Starlette con plantillas Jinja2) |
+| `src/actas/mcp_servidor.py` · `mcp_guarda.py` · `lectura_mcp.py` · `enmascarar.py` | MCP de solo lectura para Hermes (puerto 8081 del panel): herramientas, guarda de token y host, lista blanca de salida y enmascarado de correos y teléfonos (`docs/decisiones/0004-mcp-solo-lectura.md`) |
 | `textos/` | Textos informativos versionados (`informativo-<versión>.md`) que muestra «Grabar»; la versión queda en `conformidades` |
 | `migraciones/` | Esquema del inquilino `actas` del PostgreSQL compartido (lo aplica `actas_owner` en el initContainer, `python -m actas.migrar`) |
 | `tests/unit/` · `tests/integracion/` | Unitarios (objetivo de la mutación) e integración con PostgreSQL (`ACTAS_DSN_PRUEBAS`, `scripts/pg-pruebas.sh`) y con Chromium (`ACTAS_CHROMIUM`) |

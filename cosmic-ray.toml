@@ -20,10 +20,13 @@ module-path = [
     "src/actas/salas.py",
     "src/actas/enlaces.py",
     "src/actas/planificador.py",
+    "src/actas/enmascarar.py",
+    "src/actas/lectura_mcp.py",
+    "src/actas/mcp_guarda.py",
 ]
 timeout = 30.0
 excluded-modules = []
-test-command = "python -m pytest -x -q -p no:cacheprovider tests/unit/test_pistas.py tests/unit/test_conformidad.py tests/unit/test_estados.py tests/unit/test_purga.py tests/unit/test_sondeo.py tests/unit/test_registro.py tests/unit/test_aviso.py tests/unit/test_transcripcion.py tests/unit/test_origen.py tests/unit/test_formulario.py tests/unit/test_busqueda.py tests/unit/test_presentacion.py tests/unit/test_salas.py tests/unit/test_enlaces.py tests/unit/test_planificador.py"
+test-command = "python -m pytest -x -q -p no:cacheprovider tests/unit/test_pistas.py tests/unit/test_conformidad.py tests/unit/test_estados.py tests/unit/test_purga.py tests/unit/test_sondeo.py tests/unit/test_registro.py tests/unit/test_aviso.py tests/unit/test_transcripcion.py tests/unit/test_origen.py tests/unit/test_formulario.py tests/unit/test_busqueda.py tests/unit/test_presentacion.py tests/unit/test_salas.py tests/unit/test_enlaces.py tests/unit/test_planificador.py tests/unit/test_mcp_enmascarar.py tests/unit/test_mcp_lectura.py tests/unit/test_mcp_http.py tests/unit/test_mcp_token.py"
 
 [cosmic-ray.distributor]
 name = "local"
