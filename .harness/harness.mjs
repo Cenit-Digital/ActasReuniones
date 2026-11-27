@@ -117,6 +117,107 @@ function dirHasFiles(dir) {
   }
 }
 
+// ── MCP-first (docs/mcp-first.md) ────────────────────────────────────────────
+// Un repo que declara `"api": true` publica también su servidor MCP: carpeta del
+// servidor, `catalogo.json` con la capa de cada herramienta (el formato de la
+// centralita del Nodo: L, E, ⚠ o ✕) y un test que compare `tools/list` con él.
+// Mientras tanto vale una excepción con fecha (`mcp.exception.until`), que caduca.
+const MCP_DOC = 'docs/mcp-first.md';
+const CAPAS_MCP = new Set(['L', 'E', '⚠', '✕']);
+const SIN_RECORRER = new Set(['node_modules', '.git', '.venv', 'venv', 'target', 'dist', 'build', '__pycache__', '.harness']);
+
+/** Hoy en AAAA-MM-DD (UTC). `HARNESS_TODAY` lo fija en los tests. */
+const hoy = () => process.env.HARNESS_TODAY || new Date().toISOString().slice(0, 10);
+
+/** true si `s` es una fecha AAAA-MM-DD que existe en el calendario. */
+function fechaValida(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** Ficheros con «test» o «spec» en el nombre, bajo `dirs` (sin dependencias ni salidas de compilación). */
+function ficherosDeTest(dirs) {
+  const salida = [];
+  const recorrer = (rel, prof) => {
+    let entradas;
+    try { entradas = fs.readdirSync(path.join(CWD, rel), { withFileTypes: true }); } catch { return; }
+    for (const e of entradas) {
+      const hijo = path.join(rel, e.name);
+      if (e.isDirectory()) { if (!SIN_RECORRER.has(e.name) && prof < 8) recorrer(hijo, prof + 1); }
+      else if (/(test|spec)/i.test(e.name)) salida.push(hijo);
+    }
+  };
+  for (const d of new Set(dirs)) recorrer(d, 0);
+  return salida;
+}
+
+/** Comprueba la regla MCP-first; devuelve 0 si se cumple (o hay excepción vigente) y 1 si no. */
+function checkMcpFirst(cfg) {
+  const mcp = cfg.mcp && typeof cfg.mcp === 'object' ? cfg.mcp : {};
+  const dir = (typeof mcp.dir === 'string' && mcp.dir.trim()) || 'mcp';
+  const catalogoRel = path.join(dir, 'catalogo.json').split(path.sep).join('/');
+  const ayuda = () => console.log(`        Qué se exige y cómo cumplirlo: ${MCP_DOC}`);
+
+  if (mcp.exception !== undefined) {
+    const ex = mcp.exception || {};
+    if (!fechaValida(ex.until)) {
+      fail('mcp.exception.until debe ser una fecha AAAA-MM-DD: una excepción sin fecha no caduca nunca');
+      ayuda();
+      return 1;
+    }
+    const detalle = `${ex.reason || 'sin motivo'}${ex.issue ? `, ${ex.issue}` : ''}`;
+    if (hoy() > ex.until) {
+      fail(`La excepción MCP-first caducó el ${ex.until} (${detalle}): publica el MCP o renueva la fecha con motivo`);
+      ayuda();
+      return 1;
+    }
+    ok(`Excepción MCP-first vigente hasta ${ex.until} (${detalle})`);
+    return 0;
+  }
+
+  let exit = 0;
+  const falta = (msg) => { fail(msg); exit = 1; };
+  const absDir = path.join(CWD, dir);
+  if (!fs.existsSync(absDir)) {
+    falta(`api:true y no existe ${dir}/ con el servidor MCP (o declara mcp.dir)`);
+    ayuda();
+    return 1;
+  }
+  const servidor = fs.readdirSync(absDir).filter((f) => !f.startsWith('.') && f !== 'catalogo.json');
+  if (servidor.length === 0) falta(`Falta el servidor MCP en ${dir}/ (solo hay catálogo)`);
+  else ok(`Servidor MCP en ${dir}/`);
+
+  const absCat = path.join(CWD, catalogoRel);
+  if (!fs.existsSync(absCat)) {
+    falta(`Falta ${catalogoRel}: la capa (L, E, ⚠ o ✕) de cada herramienta`);
+  } else {
+    let cat;
+    try { cat = JSON.parse(readText(absCat)); } catch (e) { cat = undefined; falta(`${catalogoRel} no es JSON válido: ${e.message}`); }
+    if (cat !== undefined) {
+      if (!cat || typeof cat !== 'object' || Array.isArray(cat) || Object.keys(cat).length === 0) {
+        falta(`${catalogoRel} debe ser un objeto { "herramienta": "L" | "E" | "⚠" | "✕" } con al menos una herramienta`);
+      } else {
+        const malas = Object.entries(cat)
+          .filter(([, v]) => !CAPAS_MCP.has(typeof v === 'object' && v !== null ? v.capa : v))
+          .map(([k]) => k);
+        if (malas.length) falta(`Capa no válida en ${catalogoRel} (debe ser L, E, ⚠ o ✕): ${malas.join(', ')}`);
+        else ok(`${Object.keys(cat).length} herramientas en ${catalogoRel}, todas con capa`);
+      }
+    }
+  }
+
+  const tests = ficherosDeTest([cfg.paths.tests, cfg.paths.src, dir]).filter((f) => {
+    try { return fs.statSync(path.join(CWD, f)).size < 1048576 && readText(path.join(CWD, f)).includes('catalogo.json'); }
+    catch { return false; }
+  });
+  if (tests.length === 0) falta(`Falta un test que compare tools/list con ${catalogoRel}`);
+  else ok(`Test del catálogo: ${tests[0]}`);
+
+  if (exit) ayuda();
+  return exit;
+}
+
 function cmdInit() {
   const cfg = loadConfig();
   let exit = 0;
@@ -171,6 +272,11 @@ function cmdInit() {
       fail('Hay tests rotos');
       exit = 1;
     }
+  }
+
+  if (cfg.api === true) {
+    rule(cfg.commands.lint ? '5. MCP-first' : '4. MCP-first');
+    if (checkMcpFirst(cfg) !== 0) exit = 1;
   }
 
   rule('Resumen');

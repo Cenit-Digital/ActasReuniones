@@ -11,7 +11,7 @@
     "CLAUDE.md",
     "bin/harness", "bin/harness.ps1", "GEMINI.md", "harness.manifest.json", "harness.schema.json",
     "init.ps1", "init.sh", "scripts/harness-upgrade.mjs",
-    "docs/configuration.md", "docs/gherkin.md",
+    "docs/configuration.md", "docs/gherkin.md", "docs/mcp-first.md",
     "docs/instrucciones-de-usuario.md",
     "docs/modelos.md", "docs/mutation-testing.md", "docs/tdd.md", "docs/tooling.md", "docs/verification.md",
     ".claude/skills/impeccable/", ".agents/skills/impeccable/",

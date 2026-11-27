@@ -50,6 +50,14 @@
     "threshold": 0.8,
     "targets": []
   },
+  "api": true,
+  "mcp": {
+    "exception": {
+      "until": "2026-12-20",
+      "reason": "el servidor MCP ya existe; faltan su catalogo.json de capas y el test del catálogo",
+      "issue": "Cenit-Digital/ActasReuniones#33"
+    }
+  },
   "rules": {
     "require_tests_to_close": true,
     "require_mutation_to_close": false
