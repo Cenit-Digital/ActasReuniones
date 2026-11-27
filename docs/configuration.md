@@ -37,6 +37,8 @@ Comandos: `init`, `test`, `mutate [target]`, `verify`, `help`. `verify` es `init
   },
   "paths": { "src": "src", "tests": "tests" },   // solo si tu layout difiere de los defaults
   "mutation": { "threshold": 0.8, "targets": ["src/…"] },
+  "api": false,                   // true = expone una API: MCP-first (docs/mcp-first.md)
+  "mcp": { "dir": "mcp" },        // opcional; también mcp.exception con fecha
   "rules": {
     "require_tests_to_close": true,
     "require_mutation_to_close": true
@@ -46,6 +48,8 @@ Comandos: `init`, `test`, `mutate [target]`, `verify`, `help`. `verify` es `init
 
 - El motor no lee `feature_list.json`, `progress/` ni `features/`: si tu proyecto los conserva, son tuyos. Si tu `harness.config.json` aún trae `paths.features`, `paths.progress`, `paths.spec`, `paths.feature_list`, `rules.one_feature_at_a_time` o `rules.require_approved_spec_to_implement`, el motor las ignora; puedes borrarlas.
 - `require_tests_to_close` y `require_mutation_to_close` rigen solo `verify`. Con `require_tests_to_close: true`, `verify` aborta si `commands.test` está vacío. Con `require_mutation_to_close: true`, `verify` ejecuta `commands.mutate` (todos los `mutation.targets`) y aborta si está vacío o no supera el umbral; con `false` **no ejecuta la mutación**, aunque `commands.mutate` esté declarado. El `harness.config.json` de la plantilla las trae a `false` porque no declara stack; ponlas a `true` cuando declares `commands.test` y `commands.mutate`.
+
+- `api` y `mcp` rigen la regla MCP-first: con `"api": true`, `init` exige el servidor MCP en `mcp.dir` (por defecto `mcp/`), su `catalogo.json` con la capa de cada herramienta y un test que lo use, salvo una excepción vigente en `mcp.exception`. Ver [docs/mcp-first.md](mcp-first.md).
 
 ### Tokens en `commands`
 

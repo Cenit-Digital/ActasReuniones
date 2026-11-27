@@ -86,6 +86,30 @@
         }
       }
     },
+    "api": {
+      "type": "boolean",
+      "default": false,
+      "description": "MCP-first (docs/mcp-first.md): true si el repo expone una API. Entonces `init` exige su servidor MCP, el catálogo de capas y un test que lo use, salvo excepción vigente en mcp.exception."
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Servidor MCP del repo (solo cuenta con api:true).",
+      "properties": {
+        "dir": { "type": "string", "default": "mcp", "description": "Carpeta del servidor MCP y de su catalogo.json." },
+        "exception": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["until", "reason", "issue"],
+          "description": "Excepción temporal a MCP-first: hasta esa fecha `init` no exige el MCP; después, falla.",
+          "properties": {
+            "until": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "description": "Último día (AAAA-MM-DD, UTC) en que vale la excepción." },
+            "reason": { "type": "string", "minLength": 1, "description": "Por qué todavía no hay MCP." },
+            "issue": { "type": "string", "minLength": 1, "description": "Issue que lo resuelve (Org/Repo#N)." }
+          }
+        }
+      }
+    },
     "rules": {
       "type": "object",
       "additionalProperties": { "type": "boolean" },
